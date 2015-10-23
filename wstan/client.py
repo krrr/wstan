@@ -7,15 +7,14 @@ from wstan.relay import RelayMixin
 from wstan import parse_relay_request, loop, config
 
 
-class WSTunClientProtocol(RelayMixin, WebSocketClientProtocol):
+class WSTunClientProtocol(WebSocketClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # in seconds. close tunnel on timeout
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
 
     def __init__(self):
-        RelayMixin.__init__(self)
-        WebSocketClientProtocol.__init__(self)
+        super().__init__()
         self.lastIdleTime = None
         self.checkTimeoutTask = None
         self.tunOpen = asyncio.Future()

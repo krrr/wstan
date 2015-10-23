@@ -5,10 +5,9 @@ from wstan.relay import RelayMixin
 from wstan import parse_relay_request, loop, config
 
 
-class WSTunServerProtocol(RelayMixin, WebSocketServerProtocol):
+class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def __init__(self):
-        RelayMixin.__init__(self)
-        WebSocketServerProtocol.__init__(self)
+        super().__init__()
         self.clientAddr = None
         self.clientPort = None
 

@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import weakref
+from autobahn.websocket.protocol import WebSocketProtocol
 from wstan import config
 
 
-class RelayMixin:
+class RelayMixin(WebSocketProtocol):
     # state of relay can be changed by methods resetTunnel & onResetTunnel
     # USING --RST-sent--> RESETTING2 --RST-received--> IDLE
     # USING --RST-received--> RESETTING1 --RST-sent--> IDLE
@@ -17,6 +18,7 @@ class RelayMixin:
     allConn = weakref.WeakSet() if config.debug else None  # used to debug tunnel that never close
 
     def __init__(self):
+        super().__init__()
         self.tunState = self.TUN_STATE_IDLE
         self._reader = None
         self._writer = None
