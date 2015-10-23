@@ -7,7 +7,27 @@ from wstan.relay import RelayMixin
 from wstan import parse_relay_request, loop, config
 
 
-class WSTunClientProtocol(WebSocketClientProtocol, RelayMixin):
+# noinspection PyAttributeOutsideInit
+class CustomWSClientProtocol(WebSocketClientProtocol):
+    """Add auto-ping switch (dirty way)."""
+    def enableAutoPing(self, interval):
+        try:
+            self.autoPingInterval = interval
+            self.autoPingPendingCall = loop.call_later(interval, self._sendAutoPing)
+        except AttributeError:
+            logging.warning('failed to enable auto-ping, maybe library changed its internal method')
+
+    def disableAutoPing(self):
+        try:
+            self.autoPingInterval = 0
+            if self.autoPingPendingCall:
+                self.autoPingPendingCall.cancel()
+                self.autoPingPendingCall = None
+        except AttributeError:
+            logging.warning('failed to disable auto-ping')
+
+
+class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # in seconds. close tunnel on timeout
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
@@ -74,6 +94,7 @@ class WSTunClientProtocol(WebSocketClientProtocol, RelayMixin):
             assert not tun.checkTimeoutTask
             tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
             tun.pool = cls.pool
+            tun.enableAutoPing(4)
             cls.pool.append(tun)
 
     @classmethod
@@ -85,6 +106,7 @@ class WSTunClientProtocol(WebSocketClientProtocol, RelayMixin):
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
             tun.pool = None
+            tun.disableAutoPing()
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
@@ -95,7 +117,6 @@ class WSTunClientProtocol(WebSocketClientProtocol, RelayMixin):
 factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
-factory.autoPingInterval = 4
 factory.autoPingTimeout = 3
 
 
