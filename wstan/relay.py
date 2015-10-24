@@ -9,7 +9,7 @@ class RelayMixin(WebSocketProtocol):
     # state of relay can be changed by methods resetTunnel & onResetTunnel
     # USING --RST-sent--> RESETTING2 --RST-received--> IDLE
     # USING --RST-received--> RESETTING1 --RST-sent--> IDLE
-    # IDLE --target-info-received-and-connected-to-it--> USING
+    # IDLE --setProxy--> USING
     # IDLE --RST-received--> IDLE
     # IDLE --RST-sent--> IDLE  (when failed to connect target)
     # relay on RESETTING1 can still push data to tunnel, and pull data from tunnel on RESETTING2

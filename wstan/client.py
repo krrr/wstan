@@ -30,6 +30,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # in seconds. close tunnel on timeout
+    TUN_PING_INTERVAL = 4  # only tunnels in pool do auto-ping
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
 
@@ -94,7 +95,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             assert not tun.checkTimeoutTask
             tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
             tun.pool = cls.pool
-            tun.enableAutoPing(4)
+            tun.enableAutoPing(cls.TUN_PING_INTERVAL)
             cls.pool.append(tun)
 
     @classmethod
@@ -110,7 +111,11 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
-            yield from asyncio.wait([tun.tunOpen], timeout=5)
+            try:
+                yield from asyncio.wait([tun.tunOpen], timeout=5)
+            except asyncio.TimeoutError:
+                tun.dropConnection()
+                raise
         return tun
 
 
@@ -158,7 +163,7 @@ def tcp_proxy_req_handler(reader, writer):
 
     try:
         tun = yield from WSTunClientProtocol.getOrCreate()
-    except (ConnectionError, OSError, TimeoutError, asyncio.TimeoutError) as e:
+    except Exception as e:
         logging.error('failed to establish tunnel: %s' % e)
         return writer.close()
 
