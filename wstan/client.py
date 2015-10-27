@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+import os
+import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
@@ -9,7 +11,12 @@ from wstan import parse_relay_request, loop, config
 
 # noinspection PyAttributeOutsideInit
 class CustomWSClientProtocol(WebSocketClientProtocol):
-    """Add auto-ping switch (dirty way)."""
+    """Add auto-ping switch (dirty way) and let us manually start handshaking."""
+    def __init__(self):
+        super().__init__()
+        self.customUriPath = '/'
+        self.delayedHandshake = asyncio.Future()
+
     def enableAutoPing(self, interval):
         try:
             self.autoPingInterval = interval
@@ -25,6 +32,33 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
                 self.autoPingPendingCall = None
         except AttributeError:
             logging.warning('failed to disable auto-ping')
+
+    def startHandshake(self):
+        """Delay handshake because some states must be set before handshake (so
+        they can't be set in factory)."""
+        self.delayedHandshake.set_result(None)
+
+    def restartHandshake(self):
+        """Customize handshake HTTP header."""
+        asyncio.wait_for(self.delayedHandshake, 5)
+        self.websocket_key = base64.b64encode(os.urandom(16))
+        request = [
+            'GET %s HTTP/1.1' % self.customUriPath,
+            'Host: %s:%d' % (self.factory.host, self.factory.port),
+            'User-Agent: wwww',
+            'Sec-WebSocket-Key: %s' % self.websocket_key.decode(),
+            'Sec-WebSocket-Version: %d' % self.SPEC_TO_PROTOCOL_VERSION[self.version],
+            'Pragma: no-cache',
+            'Cache-Control: no-cache',
+            'Connection: Upgrade',
+            'Upgrade: WebSocket',
+            '',
+            ''  # ends with \r\n\r\n
+        ]
+        self.http_request_data = '\r\n'.join(request).encode('utf8')
+        self.sendData(self.http_request_data)
+        if self.debug:
+            self.log.debug(request)
 
 
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
@@ -100,7 +134,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @asyncio.coroutine
-    def getOrCreate(cls):
+    def getOrCreate(cls, initData):
         if WSTunClientProtocol.pool:
             logging.debug('reuse tunnel from pool (total %s)' % len(WSTunClientProtocol.pool))
             tun = WSTunClientProtocol.pool.popleft()
@@ -108,11 +142,15 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask = None
             tun.pool = None
             tun.disableAutoPing()
+            tun.sendMessage(initData, isBinary=True)
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
+            # lower latency by sending relay header and data in ws handshake
+            tun.customUriPath = base64.b64encode(initData)
+            tun.restartHandshake()
             try:
-                yield from asyncio.wait([tun.tunOpen], timeout=5)
+                yield from asyncio.wait_for(tun.tunOpen, 5)
             except asyncio.TimeoutError:
                 tun.dropConnection()
                 raise
@@ -126,7 +164,7 @@ factory.autoPingTimeout = 3
 
 
 @asyncio.coroutine
-def tcp_proxy_req_handler(reader, writer):
+def socks5_tcp_handler(reader, writer):
     # handle auth method selection
     dat = yield from reader.read(257)
     if len(dat) < 2 or dat[0] != 0x05 or len(dat) != dat[1] + 2:
@@ -140,12 +178,12 @@ def tcp_proxy_req_handler(reader, writer):
     except ConnectionError:
         return writer.close()
     try:
-        cmd, target_info = dat[1], dat[3:]
+        cmd, target_info = dat[1], dat[2:]
         target_addr, target_port = parse_relay_request(target_info, allow_remain=False)
     except (ValueError, IndexError):
         logging.warning('invalid SOCKS v5 relay request')
         return writer.close()
-    logging.info('requested %s:%d' % (target_addr, target_port))
+    logging.info('requesting %s:%d' % (target_addr, target_port))
     if cmd != 0x01:  # CONNECT
         writer.write(b'\x05\x07\x00\x01' + b'\x00' * 6)  # \x07 == COMMAND NOT SUPPORTED
         return writer.close()
@@ -155,25 +193,23 @@ def tcp_proxy_req_handler(reader, writer):
     # connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
     try:
-        dat = yield from reader.read(WSTunClientProtocol.BUF_SIZE)
+        dat = yield from reader.read(2048)
     except ConnectionError:
         dat = None
     if not dat:
         return writer.close()
 
     try:
-        tun = yield from WSTunClientProtocol.getOrCreate()
+        tun = yield from WSTunClientProtocol.getOrCreate(target_info + dat)
     except Exception as e:
         logging.error('failed to establish tunnel: %s' % e)
         return writer.close()
-
-    tun.sendMessage(target_info + dat, isBinary=True)
     tun.setProxy(reader, writer)
 
 
 def main():
     server = loop.run_until_complete(
-        asyncio.start_server(tcp_proxy_req_handler, config.addr, config.port))
+        asyncio.start_server(socks5_tcp_handler, config.addr, config.port))
     print('wstan client -- SOCKS v5 server listen on %s:%d' % (config.addr, config.port))
     try:
         loop.run_forever()

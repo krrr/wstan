@@ -13,28 +13,33 @@ config = loop = None
 
 
 def parse_relay_request(dat, allow_remain=True):
-    """Extract address and port from SOCKS relay request header (only 3 parts:
-    ATYP | DST.ADDR | DST.PORT). These data will also be reused in tunnel server."""
-    atyp = dat[0]
-    if atyp == 0x01:  # IPv4
-        port_idx = 5
-        target_addr = socket.inet_ntoa(dat[1:port_idx])
-    elif atyp == 0x03:  # domain name
-        port_idx = 2 + dat[1]
-        target_addr = dat[2:port_idx].decode('ascii')
-    elif atyp == 0x04:  # IPv6
-        port_idx = 17
-        target_addr = socket.inet_ntop(socket.AF_INET6, dat[1:port_idx])
-    else:
+    """Extract address and port from SOCKS relay request header (only 4 parts:
+    RSV(0x00) | ATYP | DST.ADDR | DST.PORT). These data will also be reused in tunnel server."""
+    if dat[0] != 0x00:
         raise ValueError
-    target_port = struct.unpack('>H', dat[port_idx:port_idx+2])[0]
-    dat_remain = dat[port_idx+2:]
-    if allow_remain:
-        return target_addr, target_port, dat_remain
-    else:
-        if dat_remain:
+    try:
+        atyp = dat[1]
+        if atyp == 0x01:  # IPv4
+            port_idx = 6
+            target_addr = socket.inet_ntoa(dat[2:port_idx])
+        elif atyp == 0x03:  # domain name
+            port_idx = 3 + dat[2]
+            target_addr = dat[3:port_idx].decode('ascii')
+        elif atyp == 0x04:  # IPv6
+            port_idx = 18
+            target_addr = socket.inet_ntop(socket.AF_INET6, dat[2:port_idx])
+        else:
             raise ValueError
-        return target_addr, target_port
+        target_port = struct.unpack('>H', dat[port_idx:port_idx+2])[0]
+        dat_remain = dat[port_idx+2:]
+        if allow_remain:
+            return target_addr, target_port, dat_remain
+        else:
+            if dat_remain:
+                raise ValueError
+            return target_addr, target_port
+    except (IndexError, struct.error):
+        raise ValueError
 
 
 def load_config():
