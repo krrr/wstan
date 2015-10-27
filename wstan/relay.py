@@ -7,13 +7,10 @@ from wstan import config
 
 class RelayMixin(WebSocketProtocol):
     # state of relay can be changed by methods resetTunnel & onResetTunnel
-    # USING --RST-sent--> RESETTING2 --RST-received--> IDLE
-    # USING --RST-received--> RESETTING1 --RST-sent--> IDLE
+    # USING --RST-sent--> RESETTING --RST-received--> IDLE
+    # USING --RST-received-and-RST-sent--> IDLE
     # IDLE --setProxy--> USING
-    # IDLE --RST-received--> IDLE
-    # IDLE --RST-sent--> IDLE  (when failed to connect target)
-    # relay on RESETTING1 can still push data to tunnel, and pull data from tunnel on RESETTING2
-    TUN_STATE_IDLE, TUN_STATE_USING, TUN_STATE_RESETTING1, TUN_STATE_RESETTING2 = range(4)
+    TUN_STATE_IDLE, TUN_STATE_USING, TUN_STATE_RESETTING = range(3)
     BUF_SIZE = 8192
     allConn = weakref.WeakSet() if config.debug else None  # used to debug tunnel that never close
 
@@ -32,11 +29,11 @@ class RelayMixin(WebSocketProtocol):
         self._reader, self._writer = reader, writer
         self._pushToTunTask = asyncio.async(self._pushToTunnelLoop())
 
-    def _clearProxy(self):
-        # this will be called after tunnel reset
+    def succeedReset(self):
+        """This method will be called after succeeded to reset tunnel."""
+        logging.debug('reset tunnel succeed')
         self._writer = self._reader = self._pushToTunTask = None
         self.tunState = self.TUN_STATE_IDLE
-        logging.debug('reset tunnel succeed')
 
     @asyncio.coroutine
     def _pushToTunnelLoop(self):
@@ -53,26 +50,20 @@ class RelayMixin(WebSocketProtocol):
         if self.tunState == self.TUN_STATE_USING:
             self.sendMessage(b'RST')
             self._pushToTunTask.cancel()
-            self._reader = self._pushToTunTask = None
-            self.tunState = self.TUN_STATE_RESETTING2
-        elif self.tunState == self.TUN_STATE_RESETTING1:
-            self.sendMessage(b'RST')
-            self._clearProxy()
-        elif self.tunState == self.TUN_STATE_IDLE:
-            self.sendMessage(b'RST')
+            self._writer.close()
+            self.tunState = self.TUN_STATE_RESETTING
         else:
             self.sendClose(3001, reason='tried to reset from %d' % self.tunState)
 
     def onResetTunnel(self):
         if self.tunState == self.TUN_STATE_USING:
-            self._writer.close()
-            self._writer = None
-            self.tunState = self.TUN_STATE_RESETTING1
-        elif self.tunState == self.TUN_STATE_RESETTING2:
             self.sendMessage(b'RST')
-            self._clearProxy()
-        elif self.tunState == self.TUN_STATE_IDLE:
-            pass
+            self._pushToTunTask.cancel()
+            self._writer.close()
+            self.succeedReset()
+        elif self.tunState == self.TUN_STATE_RESETTING:
+            self.tunState = self.TUN_STATE_IDLE
+            self.succeedReset()
         else:
             self.sendClose(3001, reason='tried to reset on %d' % self.tunState)
 

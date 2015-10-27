@@ -44,6 +44,17 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             writer.write(data)
         self.connectTargetTask = None
 
+    def onResetTunnel(self):
+        # received reset before connected to target
+        # there is a state which only exists in wstan server: connecting
+        if self.tunState == self.TUN_STATE_IDLE:
+            self.sendMessage(b'RST')
+            self.connectTargetTask.cancel()
+            self.connectTargetTask = None
+            self.succeedReset()
+        else:
+            super().onResetTunnel()
+
     def onOpen(self):
         self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
 
@@ -52,7 +63,6 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         if not isBinary:
             assert payload == b'RST'
             return self.onResetTunnel()
-
         if self.tunState == self.TUN_STATE_IDLE:
             if self.connectTargetTask:
                 logging.debug('data received while waiting for connectTargetTask')
@@ -63,7 +73,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 return self.sendClose(3005, reason='invalid relay address info')
             self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
             return
-        elif self.tunState == self.TUN_STATE_RESETTING1:
+        elif self.tunState == self.TUN_STATE_RESETTING:
             return
 
         self._writer.write(payload)

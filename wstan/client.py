@@ -82,8 +82,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         def onResetTunnel(self):
             self.sendClose(1000, reason='tunnel keep-alive disabled')
 
-    def _clearProxy(self):
-        super()._clearProxy()
+    def succeedReset(self):
+        super().succeedReset()
         self.lastIdleTime = time.time()
         WSTunClientProtocol.addToPool(self)
 
@@ -96,8 +96,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             assert payload == b'RST'
             self.onResetTunnel()
             return
-
-        if self.tunState == self.TUN_STATE_RESETTING1:
+        if self.tunState == self.TUN_STATE_RESETTING:
             return
 
         if self._writer:
