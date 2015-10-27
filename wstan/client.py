@@ -147,7 +147,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
             # lower latency by sending relay header and data in ws handshake
-            tun.customUriPath = base64.b64encode(initData)
+            tun.customUriPath = '/' + base64.b64encode(initData).decode()
             tun.restartHandshake()
             try:
                 yield from asyncio.wait_for(tun.tunOpen, 5)

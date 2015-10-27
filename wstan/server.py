@@ -20,11 +20,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         try:
             initData = base64.b64decode(self.http_request_path[1:])
         except Exception:
-            raise ConnectionDeny
+            raise ConnectionDeny(404)
         try:
             addr, port, remainData = parse_relay_request(initData)
         except ValueError:
-            raise ConnectionDeny
+            raise ConnectionDeny(400)
         assert remainData
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 

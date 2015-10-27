@@ -15,7 +15,7 @@ config = loop = None
 def parse_relay_request(dat, allow_remain=True):
     """Extract address and port from SOCKS relay request header (only 4 parts:
     RSV(0x00) | ATYP | DST.ADDR | DST.PORT). These data will also be reused in tunnel server."""
-    if dat[0] != 0x00:
+    if not dat or dat[0] != 0x00:
         raise ValueError
     try:
         atyp = dat[1]
