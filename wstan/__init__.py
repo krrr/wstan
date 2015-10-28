@@ -3,6 +3,7 @@ import logging
 import socket
 import struct
 import argparse
+import re
 from autobahn.websocket.protocol import parseWsUrl
 
 __author__ = 'krrr'
@@ -10,6 +11,41 @@ __version__ = '0.1'
 
 # global variables shared between modules
 config = loop = None
+
+_accept_html = re.compile(rb'^Accept:.*text/html', re.IGNORECASE)
+_error_page = '''<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>wstan error</title>
+    <style type="text/css">
+      body {{
+        font-family: sans-serif;
+        font-size: 12pt;
+        height: 100%;
+      }}
+      h1 {{
+        font-size: 18pt;
+        color: #333;
+      }}
+      #frame {{
+        margin: 0 auto;
+        margin-top: 80px;
+        width: 80%;
+        color: #444;
+      }}
+      hr {{ color: #BBB }}
+    </style>
+  </head>
+  <body>
+    <div id="frame">
+      <h1>wstan error: can't connect to wstan server</h1>
+      <hr />
+      <p>{info}</p>
+    </div>
+  </body>
+</html>
+'''
 
 
 def parse_relay_request(dat, allow_remain=True):
@@ -63,6 +99,19 @@ def load_config():
 
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     return args
+
+
+def try_intercept_html(dat, info, writer):
+    """Determine if a string of bytes is HTTP request header and whether it
+    accepts HTML."""
+    if not dat.startswith(b'GET') or not any(_accept_html.match(i) for i in dat.split(b'\r\n')):
+        return
+
+    body = _error_page.format(info=info).encode()
+    header = '\r\n'.join(
+        ['HTTP/1.1 599 WSTAN ERROR', 'Content-Type: text/html; charset=UTF-8',
+         'Content-Length: %d' % len(body), '', '']).encode()
+    writer.write(header + body)
 
 
 def main_entry():

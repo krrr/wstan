@@ -6,7 +6,7 @@ import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import parse_relay_request, loop, config
+from wstan import parse_relay_request, loop, config, try_intercept_html
 
 
 # noinspection PyAttributeOutsideInit
@@ -202,6 +202,7 @@ def socks5_tcp_handler(reader, writer):
         tun = yield from WSTunClientProtocol.getOrCreate(target_info + dat)
     except Exception as e:
         logging.error('failed to establish tunnel: %s' % e)
+        try_intercept_html(dat, str(e), writer)
         return writer.close()
     tun.setProxy(reader, writer)
 
