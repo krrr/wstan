@@ -1,10 +1,7 @@
-import asyncio
 import logging
 import socket
 import struct
-import argparse
 import re
-from autobahn.websocket.protocol import parseWsUrl
 
 __author__ = 'krrr'
 __version__ = '0.1'
@@ -79,6 +76,9 @@ def parse_relay_request(dat, allow_remain=True):
 
 
 def load_config():
+    import argparse
+    from autobahn.websocket.protocol import parseWsUrl
+
     parser = argparse.ArgumentParser(description='wstan')
     # common config
     parser.add_argument('uri', help='URI of server')
@@ -115,6 +115,8 @@ def try_intercept_html(dat, info, writer):
 
 
 def main_entry():
+    import asyncio
+
     global config, loop
     config = load_config()
     loop = asyncio.get_event_loop()
