@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import base64
+from binascii import Error as Base64Error
 from autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
-from wstan import parse_relay_request, loop, config
+from wstan import parse_relay_header, loop, config
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
@@ -17,14 +18,13 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def onConnect(self, request):
         # this method can't be coroutine (framework limitation)
         # print(request.headers.get('sec-websocket-key'))
+        self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
         try:
             initData = base64.b64decode(self.http_request_path[1:])
-        except Exception:
+            addr, port, remainData = parse_relay_header(initData)
+        except (ValueError, Base64Error) as e:
+            logging.error('%s (from %s:%s)' % (e, self.clientAddr, self.clientPort))
             raise ConnectionDeny(404)
-        try:
-            addr, port, remainData = parse_relay_request(initData)
-        except ValueError:
-            raise ConnectionDeny(400)
         assert remainData
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 
@@ -55,9 +55,6 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         else:
             super().onResetTunnel()
 
-    def onOpen(self):
-        self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
-
     @asyncio.coroutine
     def onMessage(self, payload, isBinary):
         if not isBinary:
@@ -68,7 +65,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 logging.debug('data received while waiting for connectTargetTask')
                 yield from asyncio.wait_for(self.connectTargetTask, None)
             try:
-                addr, port, remainData = parse_relay_request(payload)
+                addr, port, remainData = parse_relay_header(payload)
             except ValueError:
                 return self.sendClose(3005, reason='invalid relay address info')
             self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))

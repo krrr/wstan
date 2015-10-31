@@ -6,7 +6,7 @@ import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import parse_relay_request, loop, config, try_intercept_html
+from wstan import parse_socks_addr, loop, config, try_intercept_html, make_relay_header
 
 
 # noinspection PyAttributeOutsideInit
@@ -134,7 +134,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @asyncio.coroutine
-    def getOrCreate(cls, initData):
+    def getOrCreate(cls, datToSend):
         if WSTunClientProtocol.pool:
             logging.debug('reuse tunnel from pool (total %s)' % len(WSTunClientProtocol.pool))
             tun = WSTunClientProtocol.pool.popleft()
@@ -142,12 +142,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask = None
             tun.pool = None
             tun.disableAutoPing()
-            tun.sendMessage(initData, isBinary=True)
+            tun.sendMessage(datToSend, isBinary=True)
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
             # lower latency by sending relay header and data in ws handshake
-            tun.customUriPath = '/' + base64.b64encode(initData).decode()
+            tun.customUriPath = '/' + base64.b64encode(datToSend).decode()
             tun.restartHandshake()
             try:
                 yield from asyncio.wait_for(tun.tunOpen, cls.TUN_OPEN_TIMEOUT)
@@ -178,8 +178,8 @@ def socks5_tcp_handler(reader, writer):
     except ConnectionError:
         return writer.close()
     try:
-        cmd, target_info = dat[1], dat[2:]
-        target_addr, target_port = parse_relay_request(target_info, allow_remain=False)
+        cmd, addr_header = dat[1], dat[2:]
+        target_addr, target_port = parse_socks_addr(addr_header)
     except (ValueError, IndexError):
         logging.warning('invalid SOCKS v5 relay request')
         return writer.close()
@@ -200,7 +200,8 @@ def socks5_tcp_handler(reader, writer):
         return writer.close()
 
     try:
-        tun = yield from WSTunClientProtocol.getOrCreate(target_info + dat)
+        tun = yield from WSTunClientProtocol.getOrCreate(
+            datToSend=make_relay_header(addr_header, dat))
     except Exception as e:
         logging.error('failed to establish tunnel: %s' % e)
         try_intercept_html(dat, str(e), writer)

@@ -1,6 +1,9 @@
 import logging
 import socket
 import struct
+import sys
+import hmac
+import hashlib
 import re
 
 __author__ = 'krrr'
@@ -45,8 +48,8 @@ _error_page = '''<!DOCTYPE html>
 '''
 
 
-def parse_relay_request(dat, allow_remain=True):
-    """Extract address and port from SOCKS relay request header (only 4 parts:
+def parse_socks_addr(dat, allow_remain=False):
+    """Extract address and port from SOCKS request header (only 4 parts:
     RSV(0x00) | ATYP | DST.ADDR | DST.PORT). These data will also be reused in tunnel server."""
     if not dat or dat[0] != 0x00:
         raise ValueError
@@ -64,28 +67,53 @@ def parse_relay_request(dat, allow_remain=True):
         else:
             raise ValueError
         target_port = struct.unpack('>H', dat[port_idx:port_idx+2])[0]
-        dat_remain = dat[port_idx+2:]
         if allow_remain:
-            return target_addr, target_port, dat_remain
+            return target_addr, target_port, port_idx + 2
         else:
-            if dat_remain:
+            if dat[port_idx+2:]:
                 raise ValueError
             return target_addr, target_port
     except (IndexError, struct.error):
         raise ValueError
 
 
+DIGEST_LEN = 20
+get_digest = lambda dat: hmac.new(config.key, dat, hashlib.sha1).digest()
+
+
+def parse_relay_header(dat):
+    """Extract addr, port and rest data from relay request. Format:
+    SOCKS address header | hmac-md5 of previous part (16bytes) | rest data (optional)"""
+    addr, port, remain_idx = parse_socks_addr(dat, allow_remain=True)
+    addr_header, digest, remain = (dat[:remain_idx], dat[remain_idx:remain_idx+DIGEST_LEN],
+                                   dat[remain_idx+DIGEST_LEN:])
+    if len(digest) != DIGEST_LEN:
+        raise ValueError('incorrect digest length')
+    if not hmac.compare_digest(digest, get_digest(addr_header)):
+        raise ValueError('authentication failed')
+    return addr, port, remain
+
+
+def make_relay_header(addr_header, remain=b''):
+    digest = get_digest(addr_header)
+    assert len(digest) == DIGEST_LEN
+    return addr_header + digest + remain
+
+
 def load_config():
     import argparse
+    import base64
     from autobahn.websocket.protocol import parseWsUrl
 
     parser = argparse.ArgumentParser(description='wstan')
     # common config
-    parser.add_argument('uri', help='URI of server')
+    parser.add_argument('-g', '--gen-key', help='generate a key and exit', action='store_true')
+    parser.add_argument('uri', help='URI of server', nargs='?')
     g = parser.add_mutually_exclusive_group()
     g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS v5 server)',
                    action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
+    parser.add_argument('-k', '--key', help='base64 encoded 16-byte key')
     parser.add_argument('-d', '--debug', action='store_true')
     # local side config
     parser.add_argument('-a', '--addr', help='listen address of local SOCKS server (defaults localhost)',
@@ -95,15 +123,26 @@ def load_config():
     # remote side config
     parser.add_argument('-t', '--tun-addr', help='listen address of server, override URI')
     parser.add_argument('-r', '--tun-port', help='listen port of server, override URI', type=int)
-    args = parser.parse_args()
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
 
-    args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
+    args = parser.parse_args()
+    if args.key:
+        try:
+            args.key = base64.b64decode(args.key.encode())
+        except Exception:
+            print('error: invalid key')
+            sys.exit(1)
+    if args.uri:
+        args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
+    elif not args.gen_key:  # option -g can be used without URI, just like -h
+        print('error: URI required')
+        sys.exit(1)
     return args
 
 
 def try_intercept_html(dat, info, writer):
-    """Determine if a string of bytes is HTTP request header and whether it
-    accepts HTML."""
     if not dat.startswith(b'GET') or not any(_accept_html.match(i) for i in dat.split(b'\r\n')):
         return
 
@@ -122,6 +161,10 @@ def main_entry():
     loop = asyncio.get_event_loop()
     logging.basicConfig(level=logging.DEBUG if config.debug else logging.INFO,
                         format='{levelname}: {message}', style='{')
+
+    if config.gen_key:
+        from wstan.crypto import generate_key
+        return print('A fresh random key:', generate_key().decode())
 
     if config.server:
         from wstan.server import main
