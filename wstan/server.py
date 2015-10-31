@@ -91,8 +91,8 @@ def main():
     factory = WebSocketServerFactory(uri)
     factory.protocol = WSTunServerProtocol
     factory.server = ''  # hide Server field of handshake HTTP header
-    factory.autoPingInterval = 9
-    factory.autoPingTimeout = 2
+    factory.autoPingInterval = 30
+    factory.autoPingTimeout = 10
 
     server = loop.run_until_complete(loop.create_server(factory, addr, port))
     print('wstan server -- listen on %s:%d' % (addr, port))

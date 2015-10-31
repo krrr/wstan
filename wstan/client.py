@@ -65,6 +65,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # in seconds. close tunnel on timeout
     TUN_PING_INTERVAL = 4  # only tunnels in pool do auto-ping
+    TUN_OPEN_TIMEOUT = 5  # time to wait after TCP established and before succeeded WS handshake
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
 
@@ -149,7 +150,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.customUriPath = '/' + base64.b64encode(initData).decode()
             tun.restartHandshake()
             try:
-                yield from asyncio.wait_for(tun.tunOpen, 5)
+                yield from asyncio.wait_for(tun.tunOpen, cls.TUN_OPEN_TIMEOUT)
             except asyncio.TimeoutError:
                 tun.dropConnection()
                 raise
