@@ -2,8 +2,6 @@ import logging
 import socket
 import struct
 import sys
-import hmac
-import hashlib
 import re
 
 __author__ = 'krrr'
@@ -77,29 +75,6 @@ def parse_socks_addr(dat, allow_remain=False):
         raise ValueError
 
 
-DIGEST_LEN = 20
-get_digest = lambda dat: hmac.new(config.key, dat, hashlib.sha1).digest()
-
-
-def parse_relay_header(dat):
-    """Extract addr, port and rest data from relay request. Format:
-    SOCKS address header | hmac-md5 of previous part (16bytes) | rest data (optional)"""
-    addr, port, remain_idx = parse_socks_addr(dat, allow_remain=True)
-    addr_header, digest, remain = (dat[:remain_idx], dat[remain_idx:remain_idx+DIGEST_LEN],
-                                   dat[remain_idx+DIGEST_LEN:])
-    if len(digest) != DIGEST_LEN:
-        raise ValueError('incorrect digest length')
-    if not hmac.compare_digest(digest, get_digest(addr_header)):
-        raise ValueError('authentication failed')
-    return addr, port, remain
-
-
-def make_relay_header(addr_header, remain=b''):
-    digest = get_digest(addr_header)
-    assert len(digest) == DIGEST_LEN
-    return addr_header + digest + remain
-
-
 def load_config():
     import argparse
     import base64
@@ -130,7 +105,8 @@ def load_config():
     args = parser.parse_args()
     if args.key:
         try:
-            args.key = base64.b64decode(args.key.encode())
+            args.key = base64.b64decode(args.key)
+            assert len(args.key) == 16
         except Exception:
             print('error: invalid key')
             sys.exit(1)
@@ -165,6 +141,9 @@ def main_entry():
     if config.gen_key:
         from wstan.crypto import generate_key
         return print('A fresh random key:', generate_key().decode())
+
+    if config.key and config.tun_ssl:
+        logging.warning('both SSL and encryption enabled')
 
     if config.server:
         from wstan.server import main

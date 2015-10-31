@@ -6,12 +6,13 @@ import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import parse_socks_addr, loop, config, try_intercept_html, make_relay_header
+from wstan import parse_socks_addr, loop, config, try_intercept_html
 
 
 # noinspection PyAttributeOutsideInit
 class CustomWSClientProtocol(WebSocketClientProtocol):
     """Add auto-ping switch (dirty way) and let us manually start handshaking."""
+    # this framework mix camel and underline naming style, nice!
     def __init__(self):
         super().__init__()
         self.customUriPath = '/'
@@ -41,7 +42,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def restartHandshake(self):
         """Customize handshake HTTP header."""
         asyncio.wait_for(self.delayedHandshake, 5)
-        self.websocket_key = base64.b64encode(os.urandom(16))
+        assert self.websocket_key
         request = [
             'GET %s HTTP/1.1' % self.customUriPath,
             'Host: %s:%d' % (self.factory.host, self.factory.port),
@@ -75,6 +76,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.checkTimeoutTask = None
         self.tunOpen = asyncio.Future()
         self.pool = None
+        nonce = os.urandom(16)
+        if config.key:
+            self.initCrypto(nonce)
+        self.websocket_key = base64.b64encode(nonce)
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
         def resetTunnel(self):
@@ -101,6 +106,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             return
 
         if self._writer:
+            if self.cipher:
+                payload = self.decryptor.update(payload)
             self._writer.write(payload)
 
     def onClose(self, *args, **kwargs):
@@ -134,7 +141,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @asyncio.coroutine
-    def getOrCreate(cls, datToSend):
+    def getOrCreate(cls, addrHeader, dat):
         if WSTunClientProtocol.pool:
             logging.debug('reuse tunnel from pool (total %s)' % len(WSTunClientProtocol.pool))
             tun = WSTunClientProtocol.pool.popleft()
@@ -142,12 +149,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask = None
             tun.pool = None
             tun.disableAutoPing()
-            tun.sendMessage(datToSend, isBinary=True)
+            tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), isBinary=True)
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
             # lower latency by sending relay header and data in ws handshake
-            tun.customUriPath = '/' + base64.b64encode(datToSend).decode()
+            tun.customUriPath = '/' + base64.b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
             tun.restartHandshake()
             try:
                 yield from asyncio.wait_for(tun.tunOpen, cls.TUN_OPEN_TIMEOUT)
@@ -200,8 +207,7 @@ def socks5_tcp_handler(reader, writer):
         return writer.close()
 
     try:
-        tun = yield from WSTunClientProtocol.getOrCreate(
-            datToSend=make_relay_header(addr_header, dat))
+        tun = yield from WSTunClientProtocol.getOrCreate(addr_header, dat)
     except Exception as e:
         logging.error('failed to establish tunnel: %s' % e)
         try_intercept_html(dat, str(e), writer)

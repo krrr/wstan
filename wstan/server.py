@@ -5,7 +5,7 @@ from binascii import Error as Base64Error
 from autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
-from wstan import parse_relay_header, loop, config
+from wstan import loop, config
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
@@ -16,15 +16,17 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         self.connectTargetTask = None
 
     def onConnect(self, request):
-        # this method can't be coroutine (framework limitation)
-        # print(request.headers.get('sec-websocket-key'))
+        if config.key:  # setup crypto
+            nonce = base64.b64decode(request.headers['sec-websocket-key'])
+            self.initCrypto(nonce)
+
         self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
         try:
-            initData = base64.b64decode(self.http_request_path[1:])
-            addr, port, remainData = parse_relay_header(initData)
+            dat = base64.b64decode(self.http_request_path[1:])
+            addr, port, remainData = self.parseRelayHeader(dat)
         except (ValueError, Base64Error) as e:
-            logging.error('%s (from %s:%s)' % (e, self.clientAddr, self.clientPort))
-            raise ConnectionDeny(404)
+            logging.error('invalid header: %s (from %s:%s)' % (e, self.clientAddr, self.clientPort))
+            raise ConnectionDeny(400)
         assert remainData
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 
@@ -65,7 +67,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 logging.debug('data received while waiting for connectTargetTask')
                 yield from asyncio.wait_for(self.connectTargetTask, None)
             try:
-                addr, port, remainData = parse_relay_header(payload)
+                addr, port, remainData = self.parseRelayHeader(payload)
             except ValueError:
                 return self.sendClose(3005, reason='invalid relay address info')
             self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
@@ -73,6 +75,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         elif self.tunState == self.TUN_STATE_RESETTING:
             return
 
+        if self.cipher:
+            payload = self.decryptor.update(payload)
         self._writer.write(payload)
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
