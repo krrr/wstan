@@ -22,35 +22,46 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
         self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
         try:
-            dat = base64.b64decode(self.http_request_path[1:])
+            dat = base64.urlsafe_b64decode(self.http_request_path[1:])
+            cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+            if cmd != self.CMD_REQ:
+                raise ValueError('wrong command %s' % cmd)
             addr, port, remainData = self.parseRelayHeader(dat)
         except (ValueError, Base64Error) as e:
-            logging.error('invalid header: %s (from %s:%s)' % (e, self.clientAddr, self.clientPort))
+            logging.error('invalid header: %s (from %s:%s), path:%s' %
+                          (e, self.clientAddr, self.clientPort, self.http_request_path))
             raise ConnectionDeny(400)
-        assert remainData
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 
     @asyncio.coroutine
-    def connectTarget(self, addr, port, data=None):
-        # if data supplied, it will be sent after connection established
+    def connectTarget(self, addr, port, data):
         try:
             reader, writer = yield from asyncio.open_connection(addr, port)
-        except (ConnectionError, OSError, TimeoutError):
+        except (ConnectionError, OSError, TimeoutError) as e:
             logging.warning('failed to connect %s:%s (from %s:%s)' %
                             (addr, port, self.clientAddr, self.clientPort))
-            return self.sendClose(3004, reason='failed to connect target')
+            self.resetTunnel(reason='failed to connect target: %s' % e)
+            return
         logging.info('relay %s:%s <--> %s:%s' %
                      (self.clientAddr, self.clientPort, addr, port))
         self.setProxy(reader, writer)
-        if data:
-            writer.write(data)
+        assert data, 'some data must be sent after connected to target'
+        writer.write(data)
         self.connectTargetTask = None
 
-    def onResetTunnel(self):
-        # received reset before connected to target
-        # there is a state which only exists in wstan server: connecting
+    # next 2 overrides deal with a state which exists only in wstan server: CONNECTING
+    def resetTunnel(self, reason=''):
         if self.tunState == self.TUN_STATE_IDLE:
-            self.sendMessage(b'RST')
+            assert self.connectTargetTask
+            self.connectTargetTask = None
+            self.sendMessage(self.makeResetMessage(reason), True)
+            self.tunState = self.TUN_STATE_RESETTING
+        else:
+            super().resetTunnel()
+
+    def onResetTunnel(self):
+        if self.tunState == self.TUN_STATE_IDLE:  # received reset before connected to target
+            self.sendMessage(self.makeResetMessage(), True)
             self.connectTargetTask.cancel()
             self.connectTargetTask = None
             self.succeedReset()
@@ -58,26 +69,43 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             super().onResetTunnel()
 
     @asyncio.coroutine
-    def onMessage(self, payload, isBinary):
+    def onMessage(self, dat, isBinary):
         if not isBinary:
-            assert payload == b'RST'
-            return self.onResetTunnel()
-        if self.tunState == self.TUN_STATE_IDLE:
-            if self.connectTargetTask:
-                logging.debug('data received while waiting for connectTargetTask')
-                yield from asyncio.wait_for(self.connectTargetTask, None)
-            try:
-                addr, port, remainData = self.parseRelayHeader(payload)
-            except ValueError:
-                return self.sendClose(3005, reason='invalid relay address info')
-            self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
-            return
-        elif self.tunState == self.TUN_STATE_RESETTING:
-            return
+            logging.error('non binary ws message received')
+            return self.sendClose(3000)
 
-        if self.cipher:
-            payload = self.decryptor.update(payload)
-        self._writer.write(payload)
+        # TODO: log more info
+        cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+        if cmd == self.CMD_RST:
+            msg = self.parseResetMessage(dat)
+            if not msg.startswith('  '):
+                logging.info('tunnel abnormal reset: %s' % msg)
+            self.onResetTunnel()
+        elif cmd == self.CMD_REQ:
+            try:
+                if self.tunState != self.TUN_STATE_IDLE:
+                    raise ValueError('wrong command %s' % cmd)
+                addr, port, remainData = self.parseRelayHeader(dat)
+            except ValueError as e:
+                logging.error('invalid header in reused tun: %s (from %s:%s), dat:%s' %
+                              (e, self.clientAddr, self.clientPort, dat))
+                return self.sendClose(3000)
+            if self.connectTargetTask:
+                logging.debug('relay request received when connectTargetTask running')
+                # will order of messages be changed by waiting?
+                yield from asyncio.wait_for(self.connectTargetTask, None)
+            self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
+        elif cmd == self.CMD_DAT:
+            dat = self.decryptor.update(dat[1:]) if self.cipher else dat[1:]
+            if self.tunState == self.TUN_STATE_RESETTING:
+                return
+            if self.connectTargetTask:
+                logging.debug('data received when connectTargetTask running')
+                yield from asyncio.wait_for(self.connectTargetTask, None)
+            self._writer.write(dat)
+        else:
+            logging.error('wrong command')
+            # TODO: random drop
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
         return super().sendServerStatus(redirectUrl, redirectAfter) if redirectUrl else self.sendHtml('')

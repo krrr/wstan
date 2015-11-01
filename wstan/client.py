@@ -82,11 +82,11 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.websocket_key = base64.b64encode(nonce)
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
-        def resetTunnel(self):
-            self.sendClose(1000, reason='tunnel keep-alive disabled')
+        def resetTunnel(self, reason=''):
+            self.sendClose(1000)
 
         def onResetTunnel(self):
-            self.sendClose(1000, reason='tunnel keep-alive disabled')
+            self.sendClose(1000)
 
     def succeedReset(self):
         super().succeedReset()
@@ -97,18 +97,24 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.tunOpen.set_result(None)
         self.lastIdleTime = time.time()
 
-    def onMessage(self, payload, isBinary):
+    def onMessage(self, dat, isBinary):
         if not isBinary:
-            assert payload == b'RST'
-            self.onResetTunnel()
-            return
-        if self.tunState == self.TUN_STATE_RESETTING:
-            return
+            logging.error('non binary ws message received')
+            return self.sendClose(3000)
 
-        if self._writer:
-            if self.cipher:
-                payload = self.decryptor.update(payload)
-            self._writer.write(payload)
+        cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+        if cmd == self.CMD_RST:
+            msg = self.parseResetMessage(dat)
+            if not msg.startswith('  '):
+                logging.info('tunnel abnormal reset: %s' % msg)
+            self.onResetTunnel()
+        elif cmd == self.CMD_DAT:
+            dat = self.decryptor.update(dat[1:]) if self.cipher else dat[1:]
+            if self.tunState == self.TUN_STATE_RESETTING:
+                return
+            self._writer.write(dat)
+        else:
+            logging.error('wrong command')
 
     def onClose(self, *args, **kwargs):
         super().onClose(*args, **kwargs)
@@ -125,13 +131,13 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             yield from asyncio.sleep(timeout)
             if (tun.tunState == cls.TUN_STATE_IDLE and
                (time.time() - tun.lastIdleTime) > timeout):
-                tun.sendClose(1000, reason='tunnel idle timeout')
+                tun.sendClose(1000)
 
     @classmethod
     def addToPool(cls, tun):
         assert tun.tunState == cls.TUN_STATE_IDLE
         if len(cls.pool) >= cls.POOL_MAX_SIZE:
-            tun.sendClose(1000, reason='pool is full')
+            tun.sendClose(1000)
         else:
             assert not tun.checkTimeoutTask
             tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
@@ -149,12 +155,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask = None
             tun.pool = None
             tun.disableAutoPing()
-            tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), isBinary=True)
+            tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
             tun = (yield from loop.create_connection(
                 factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
             # lower latency by sending relay header and data in ws handshake
-            tun.customUriPath = '/' + base64.b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
+            tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
             tun.restartHandshake()
             try:
                 yield from asyncio.wait_for(tun.tunOpen, cls.TUN_OPEN_TIMEOUT)
