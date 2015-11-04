@@ -30,6 +30,7 @@ class RelayMixin(WebSocketProtocol):
     BUF_SIZE = random.randrange(4096, 8192)
     REQ_TTL = 15  # in seconds
     CMD_REQ, CMD_DAT, CMD_RST = range(3)  # every ws message has this command type
+    DAT_LOG_MAX_LEN = 270  # maximum length of logged data which triggered error, in bytes
     allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
 
     def __init__(self):
@@ -48,12 +49,15 @@ class RelayMixin(WebSocketProtocol):
         and HMAC (not encrypted) will be decrypted if encryption enabled. CMD should be
         raw but checked before calling this function."""
         digest = dat[-DIGEST_LEN:]
+        err = ''
         if len(digest) != DIGEST_LEN:
-            raise ValueError('incorrect digest length')
+            err = 'incorrect digest length'
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
-            raise ValueError('authentication failed')
+            err = 'authentication failed'
 
         dat = self.decryptor.update(dat[1:-DIGEST_LEN]) if self.cipher else dat[1:-DIGEST_LEN]
+        if err:
+            raise ValueError(err + ', decrypted dat: %s' % dat[:self.DAT_LOG_MAX_LEN])
 
         addr, port, remainIdx = parse_socks_addr(dat[TIMESTAMP_LEN:], allow_remain=True)
         remain = dat[TIMESTAMP_LEN+remainIdx:]  # remainIdx is relative to addrRest

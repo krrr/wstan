@@ -11,8 +11,7 @@ from wstan import loop, config
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def __init__(self):
         super().__init__()
-        self.clientAddr = None
-        self.clientPort = None
+        self.clientInfo = None
         self.connectTargetTask = None
 
     def onConnect(self, request):
@@ -20,16 +19,16 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             nonce = base64.b64decode(request.headers['sec-websocket-key'])
             self.initCrypto(nonce)
 
-        self.clientAddr, self.clientPort, *__ = self.transport.get_extra_info('peername')
+        self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')[:2]
         try:
             dat = base64.urlsafe_b64decode(self.http_request_path[1:])
-            cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+            cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
             if cmd != self.CMD_REQ:
                 raise ValueError('wrong command %s' % cmd)
             addr, port, remainData = self.parseRelayHeader(dat)
         except (ValueError, Base64Error) as e:
-            logging.error('invalid header: %s (from %s:%s), path:%s' %
-                          (e, self.clientAddr, self.clientPort, self.http_request_path))
+            logging.error('invalid header: %s (from %s), path: %s' %
+                          (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 
@@ -38,12 +37,9 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         try:
             reader, writer = yield from asyncio.open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
-            logging.warning('failed to connect %s:%s (from %s:%s)' %
-                            (addr, port, self.clientAddr, self.clientPort))
-            self.resetTunnel(reason='failed to connect target: %s' % e)
-            return
-        logging.info('relay %s:%s <--> %s:%s' %
-                     (self.clientAddr, self.clientPort, addr, port))
+            logging.warning('failed to connect %s:%s (from %s)' % (addr, port, self.clientInfo))
+            return self.resetTunnel(reason='failed to connect target: %s' % e)
+        logging.info('relay %s <--> %s:%s' % (self.clientInfo, addr, port))
         self.setProxy(reader, writer)
         assert data, 'some data must be sent after connected to target'
         writer.write(data)
@@ -57,7 +53,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             self.sendMessage(self.makeResetMessage(reason), True)
             self.tunState = self.TUN_STATE_RESETTING
         else:
-            super().resetTunnel()
+            super().resetTunnel(reason)
 
     def onResetTunnel(self):
         if self.tunState == self.TUN_STATE_IDLE:  # received reset before connected to target
@@ -71,13 +67,16 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     @asyncio.coroutine
     def onMessage(self, dat, isBinary):
         if not isBinary:
-            logging.error('non binary ws message received')
+            logging.error('non binary ws message received (from %s)' % self.clientInfo)
             return self.sendClose(3000)
 
-        # TODO: log more info
-        cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+        cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
         if cmd == self.CMD_RST:
-            msg = self.parseResetMessage(dat)
+            try:
+                msg = self.parseResetMessage(dat)
+            except ValueError as e:
+                logging.error('invalid reset message: %s (from %s)' % (e, self.clientInfo))
+                return self.sendClose(3000)
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
             self.onResetTunnel()
@@ -87,8 +86,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                     raise ValueError('wrong command %s' % cmd)
                 addr, port, remainData = self.parseRelayHeader(dat)
             except ValueError as e:
-                logging.error('invalid header in reused tun: %s (from %s:%s), dat:%s' %
-                              (e, self.clientAddr, self.clientPort, dat))
+                logging.error('invalid header in reused tun: %s (from %s)' % (e, self.clientInfo))
                 return self.sendClose(3000)
             if self.connectTargetTask:
                 logging.debug('relay request received when connectTargetTask running')
@@ -104,8 +102,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 yield from asyncio.wait_for(self.connectTargetTask, None)
             self._writer.write(dat)
         else:
-            logging.error('wrong command')
-            # TODO: random drop
+            logging.error('wrong command: %s (from %s)' % (cmd, self.clientInfo))
+            self.sendClose(3000)
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
         return super().sendServerStatus(redirectUrl, redirectAfter) if redirectUrl else self.sendHtml('')
