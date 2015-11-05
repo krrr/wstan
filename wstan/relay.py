@@ -71,7 +71,8 @@ class RelayMixin(WebSocketProtocol):
                 raise ValueError('invalid timestamp')
             expire_time = t + self.REQ_TTL
             if time.time() > expire_time:
-                raise ValueError('request expired, req: %s, now: %s' % (t, time.time()))
+                raise ValueError('request expired (%.1fs old), decrypted dat: %s' %
+                                 (time.time() - t, dat))
 
         return addr, port, remain
 
