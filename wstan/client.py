@@ -96,13 +96,15 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     def onOpen(self):
         self.tunOpen.set_result(None)
         self.lastIdleTime = time.time()
+        if not config.debug:
+            self.customUriPath = None  # save memory
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
             logging.error('non binary ws message received')
             return self.sendClose(3000)
 
-        cmd = int.from_bytes(self.decryptor.update(dat[:1]), 'big') if self.cipher else dat[0]
+        cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
         if cmd == self.CMD_RST:
             msg = self.parseResetMessage(dat)
             if not msg.startswith('  '):

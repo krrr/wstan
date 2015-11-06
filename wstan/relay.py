@@ -6,6 +6,7 @@ import struct
 import hashlib
 import time
 import random
+from asyncio.streams import FlowControlMixin
 from autobahn.websocket.protocol import WebSocketProtocol
 from wstan import config, parse_socks_addr
 if config.key:
@@ -21,7 +22,18 @@ def _get_digest(dat):
     return hmac.new(config.key, dat, hashlib.sha1).digest()
 
 
-class RelayMixin(WebSocketProtocol):
+class FlowControlledWSProtocol(FlowControlMixin, WebSocketProtocol):
+    def __init__(self):
+        FlowControlMixin.__init__(self)
+        WebSocketProtocol.__init__(self)
+
+    @asyncio.coroutine
+    def drain(self):
+        """Wait for all queued messages be sent."""
+        yield from self._drain_helper()
+
+
+class RelayMixin(FlowControlledWSProtocol):
     # state of relay can be changed by methods resetTunnel & onResetTunnel
     # USING --RST-sent--> RESETTING --RST-received--> IDLE
     # USING --RST-received-and-RST-sent--> IDLE
@@ -113,6 +125,7 @@ class RelayMixin(WebSocketProtocol):
             if self.cipher:
                 dat = self.encryptor.update(dat)
             self.sendMessage(dat, True)
+            yield from self.drain()
 
     def makeResetMessage(self, reason=''):
         dat = bytes([self.CMD_RST]) + (reason or ' ' * random.randrange(2, 8)).encode('utf-8')
@@ -145,7 +158,6 @@ class RelayMixin(WebSocketProtocol):
             self._writer.close()
             self.succeedReset()
         elif self.tunState == self.TUN_STATE_RESETTING:
-            self.tunState = self.TUN_STATE_IDLE
             self.succeedReset()
         else:
             self.sendClose(3001)
