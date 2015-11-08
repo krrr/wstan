@@ -41,7 +41,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 
     def restartHandshake(self):
         """Customize handshake HTTP header."""
-        asyncio.wait_for(self.delayedHandshake, 5)
+        asyncio.wait_for(self.delayedHandshake, None)
         assert self.websocket_key
         request = [
             'GET %s HTTP/1.1' % self.customUriPath,
@@ -78,7 +78,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.pool = None
         nonce = os.urandom(16)
         if config.key:
-            self.initCrypto(nonce)
+            self.initEncryptor(nonce)
         self.websocket_key = base64.b64encode(nonce)
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
@@ -98,21 +98,25 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.lastIdleTime = time.time()
         if not config.debug:
             self.customUriPath = None  # save memory
+        if config.key:
+            # SHA-1 has 20 bytes
+            self.initDecryptor(base64.b64decode(self.http_headers['sec-websocket-accept'])[:16])
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
             logging.error('non binary ws message received')
             return self.sendClose(3000)
 
-        cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
+        cmd = ord(self.decryptor.update(dat[:1])) if config.key else dat[0]
         if cmd == self.CMD_RST:
             msg = self.parseResetMessage(dat)
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
-            dat = self.decryptor.update(dat[1:]) if self.cipher else dat[1:]
-            if self.tunState == self.TUN_STATE_RESETTING:
+            dat = self.decryptor.update(dat[1:]) if config.key else dat[1:]
+            if self.tunState != self.TUN_STATE_USING:
+                # why this happens?
                 return
             self._writer.write(dat)
         else:
@@ -176,6 +180,7 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.autoPingTimeout = 3
+factory.openHandshakeTimeout = 10
 
 
 @asyncio.coroutine

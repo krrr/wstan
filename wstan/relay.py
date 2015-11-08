@@ -34,7 +34,8 @@ class FlowControlledWSProtocol(FlowControlMixin, WebSocketProtocol):
 
 
 class RelayMixin(FlowControlledWSProtocol):
-    # state of relay can be changed by methods resetTunnel & onResetTunnel
+    # states of relay:
+    # --> IDLE (initial)
     # USING --RST-sent--> RESETTING --RST-received--> IDLE
     # USING --RST-received-and-RST-sent--> IDLE
     # IDLE --setProxy--> USING
@@ -51,7 +52,7 @@ class RelayMixin(FlowControlledWSProtocol):
         self._reader = None
         self._writer = None
         self._pushToTunTask = None
-        self.cipher = self.encryptor = self.decryptor = None
+        self.encryptor = self.decryptor = None
         if config.debug:
             self.allConn.add(self)
             logging.debug('tunnel created (total %d)' % len(self.allConn))
@@ -67,7 +68,7 @@ class RelayMixin(FlowControlledWSProtocol):
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
             err = 'authentication failed'
 
-        dat = self.decryptor.update(dat[1:-DIGEST_LEN]) if self.cipher else dat[1:-DIGEST_LEN]
+        dat = self.decryptor.update(dat[1:-DIGEST_LEN]) if config.key else dat[1:-DIGEST_LEN]
         if err:
             raise ValueError(err + ', decrypted dat: %s' % dat[:self.DAT_LOG_MAX_LEN])
 
@@ -93,13 +94,17 @@ class RelayMixin(FlowControlledWSProtocol):
         Format: CMD_REQ | timestamp | SOCKS address header | rest data | hmac-sha1 of previous parts
         If encryption enabled then timestamp and parts after it will be encrypted."""
         dat = struct.pack('>Bd', self.CMD_REQ, time.time()) + addr_header + remain
-        if self.cipher:
+        if config.key:
             dat = self.encryptor.update(dat)
         return dat + _get_digest(dat)
 
-    def initCrypto(self, nonce):
-        self.cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
-        self.encryptor, self.decryptor = self.cipher.encryptor(), self.cipher.decryptor()
+    def initEncryptor(self, nonce):
+        cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
+        self.encryptor = cipher.encryptor()
+
+    def initDecryptor(self, nonce):
+        cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
+        self.decryptor = cipher.decryptor()
 
     def setProxy(self, reader, writer):
         self.tunState = self.TUN_STATE_USING
@@ -122,14 +127,14 @@ class RelayMixin(FlowControlledWSProtocol):
             if not dat:
                 return self.resetTunnel()
             dat = bytes([self.CMD_DAT]) + dat
-            if self.cipher:
+            if config.key:
                 dat = self.encryptor.update(dat)
             self.sendMessage(dat, True)
             yield from self.drain()
 
     def makeResetMessage(self, reason=''):
         dat = bytes([self.CMD_RST]) + (reason or ' ' * random.randrange(2, 8)).encode('utf-8')
-        if self.cipher:
+        if config.key:
             dat = self.encryptor.update(dat)
         return dat + _get_digest(dat)
 
@@ -139,7 +144,7 @@ class RelayMixin(FlowControlledWSProtocol):
             raise ValueError('incorrect digest length')
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
             raise ValueError('authentication failed')
-        msg = self.decryptor.update(dat[1:-DIGEST_LEN]) if self.cipher else dat[1:-DIGEST_LEN]
+        msg = self.decryptor.update(dat[1:-DIGEST_LEN]) if config.key else dat[1:-DIGEST_LEN]
         return msg.decode('utf-8')
 
     def resetTunnel(self, reason=''):

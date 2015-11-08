@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import base64
+import hashlib
 from binascii import Error as Base64Error
 from autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from autobahn.websocket.types import ConnectionDeny
@@ -16,13 +17,15 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     def onConnect(self, request):
         if config.key:  # setup crypto
-            nonce = base64.b64decode(request.headers['sec-websocket-key'])
-            self.initCrypto(nonce)
+            nonceB64 = request.headers['sec-websocket-key']
+            self.initDecryptor(base64.b64decode(nonceB64))
+        else:
+            nonceB64 = None
 
         self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')[:2]
         try:
             dat = base64.urlsafe_b64decode(self.http_request_path[1:])
-            cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
+            cmd = ord(self.decryptor.update(dat[:1])) if config.key else dat[0]
             if cmd != self.CMD_REQ:
                 raise ValueError('wrong command %s' % cmd)
             addr, port, remainData = self.parseRelayHeader(dat)
@@ -30,6 +33,14 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             logging.error('invalid header: %s (from %s), path: %s' %
                           (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
+
+        if nonceB64:
+            # repeat calculation in websocket library
+            sha1 = hashlib.sha1()
+            sha1.update(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            d = sha1.digest()
+            self.initEncryptor(sha1.digest()[:16])
+
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 
     @asyncio.coroutine
@@ -70,7 +81,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             logging.error('non binary ws message received (from %s)' % self.clientInfo)
             return self.sendClose(3000)
 
-        cmd = ord(self.decryptor.update(dat[:1])) if self.cipher else dat[0]
+        cmd = ord(self.decryptor.update(dat[:1])) if config.key else dat[0]
         if cmd == self.CMD_RST:
             try:
                 msg = self.parseResetMessage(dat)
@@ -94,7 +105,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 yield from asyncio.wait_for(self.connectTargetTask, None)
             self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
-            dat = self.decryptor.update(dat[1:]) if self.cipher else dat[1:]
+            dat = self.decryptor.update(dat[1:]) if config.key else dat[1:]
             if self.tunState == self.TUN_STATE_RESETTING:
                 return
             if self.connectTargetTask:
