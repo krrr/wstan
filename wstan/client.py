@@ -77,8 +77,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.tunOpen = asyncio.Future()
         self.pool = None
         nonce = os.urandom(16)
-        if config.key:
-            self.initEncryptor(nonce)
+        if not config.tun_ssl:
+            self.initCipher(nonce, encryptor=True)
         self.websocket_key = base64.b64encode(nonce)
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
@@ -98,23 +98,24 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.lastIdleTime = time.time()
         if not config.debug:
             self.customUriPath = None  # save memory
-        if config.key:
+        if not config.tun_ssl:
             # SHA-1 has 20 bytes
-            self.initDecryptor(base64.b64decode(self.http_headers['sec-websocket-accept'])[:16])
+            self.initCipher(base64.b64decode(self.http_headers['sec-websocket-accept'])[:16],
+                            decryptor=True)
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
             logging.error('non binary ws message received')
             return self.sendClose(3000)
 
-        cmd = ord(self.decryptor.update(dat[:1])) if config.key else dat[0]
+        cmd = ord(self.decrypt(dat[:1]))
         if cmd == self.CMD_RST:
             msg = self.parseResetMessage(dat)
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
-            dat = self.decryptor.update(dat[1:]) if config.key else dat[1:]
+            dat = self.decrypt(dat[1:])
             if self.tunState != self.TUN_STATE_USING:
                 # why this happens?
                 return

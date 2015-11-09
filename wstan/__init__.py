@@ -84,11 +84,11 @@ def load_config():
     # common config
     parser.add_argument('-g', '--gen-key', help='generate a key and exit', action='store_true')
     parser.add_argument('uri', help='URI of server', nargs='?')
+    parser.add_argument('key', help='base64 encoded 16-byte key', nargs='?')
     g = parser.add_mutually_exclusive_group()
     g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS v5 server)',
                    action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
-    parser.add_argument('-k', '--key', help='base64 encoded 16-byte key')
     parser.add_argument('-d', '--debug', action='store_true')
     # local side config
     parser.add_argument('-a', '--addr', help='listen address of local SOCKS server (defaults localhost)',
@@ -103,18 +103,19 @@ def load_config():
         sys.exit(1)
 
     args = parser.parse_args()
-    if args.key:
-        try:
-            args.key = base64.b64decode(args.key)
-            assert len(args.key) == 16
-        except Exception:
-            print('error: invalid key')
-            sys.exit(1)
-    if args.uri:
-        args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
-    elif not args.gen_key:  # option -g can be used without URI, just like -h
-        print('error: URI required')
+    if not args.gen_key:  # option -g can be used without URI and key, just like -h
+        for i in ['uri', 'key']:
+            if not getattr(args, i):
+                print('error: %s required' % i)
+                sys.exit(1)
+
+    try:
+        args.key = base64.b64decode(args.key)
+        assert len(args.key) == 16
+    except Exception:
+        print('error: invalid key')
         sys.exit(1)
+    args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     return args
 
 
@@ -141,9 +142,6 @@ def main_entry():
     if config.gen_key:
         from wstan.crypto import generate_key
         return print('A fresh random key:', generate_key().decode())
-
-    if config.key and config.tun_ssl:
-        logging.warning('both SSL and encryption enabled')
 
     if config.server:
         from wstan.server import main

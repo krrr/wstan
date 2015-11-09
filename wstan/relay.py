@@ -9,7 +9,7 @@ import random
 from asyncio.streams import FlowControlMixin
 from autobahn.websocket.protocol import WebSocketProtocol
 from wstan import config, parse_socks_addr
-if config.key:
+if not config.tun_ssl:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
 
@@ -52,7 +52,8 @@ class RelayMixin(FlowControlledWSProtocol):
         self._reader = None
         self._writer = None
         self._pushToTunTask = None
-        self.encryptor = self.decryptor = None
+        # they do nothing if if websocket is not wrapped in SSL
+        self.encrypt = self.decrypt = lambda dat: dat
         if config.debug:
             self.allConn.add(self)
             logging.debug('tunnel created (total %d)' % len(self.allConn))
@@ -68,7 +69,7 @@ class RelayMixin(FlowControlledWSProtocol):
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
             err = 'authentication failed'
 
-        dat = self.decryptor.update(dat[1:-DIGEST_LEN]) if config.key else dat[1:-DIGEST_LEN]
+        dat = self.decrypt(dat[1:-DIGEST_LEN])
         if err:
             raise ValueError(err + ', decrypted dat: %s' % dat[:self.DAT_LOG_MAX_LEN])
 
@@ -94,17 +95,18 @@ class RelayMixin(FlowControlledWSProtocol):
         Format: CMD_REQ | timestamp | SOCKS address header | rest data | hmac-sha1 of previous parts
         If encryption enabled then timestamp and parts after it will be encrypted."""
         dat = struct.pack('>Bd', self.CMD_REQ, time.time()) + addr_header + remain
-        if config.key:
-            dat = self.encryptor.update(dat)
+        dat = self.encrypt(dat)
         return dat + _get_digest(dat)
 
-    def initEncryptor(self, nonce):
+    def initCipher(self, nonce, encryptor=False, decryptor=False):
+        assert not (encryptor and decryptor)
         cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
-        self.encryptor = cipher.encryptor()
-
-    def initDecryptor(self, nonce):
-        cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
-        self.decryptor = cipher.decryptor()
+        if encryptor:
+            enc = cipher.encryptor()
+            self.encrypt = lambda dat: enc.update(dat)
+        elif decryptor:
+            dec = cipher.decryptor()
+            self.decrypt = lambda dat: dec.update(dat)
 
     def setProxy(self, reader, writer):
         self.tunState = self.TUN_STATE_USING
@@ -127,15 +129,12 @@ class RelayMixin(FlowControlledWSProtocol):
             if not dat:
                 return self.resetTunnel()
             dat = bytes([self.CMD_DAT]) + dat
-            if config.key:
-                dat = self.encryptor.update(dat)
-            self.sendMessage(dat, True)
+            self.sendMessage(self.encrypt(dat), True)
             yield from self.drain()
 
     def makeResetMessage(self, reason=''):
         dat = bytes([self.CMD_RST]) + (reason or ' ' * random.randrange(2, 8)).encode('utf-8')
-        if config.key:
-            dat = self.encryptor.update(dat)
+        dat = self.encrypt(dat)
         return dat + _get_digest(dat)
 
     def parseResetMessage(self, dat):
@@ -144,8 +143,7 @@ class RelayMixin(FlowControlledWSProtocol):
             raise ValueError('incorrect digest length')
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
             raise ValueError('authentication failed')
-        msg = self.decryptor.update(dat[1:-DIGEST_LEN]) if config.key else dat[1:-DIGEST_LEN]
-        return msg.decode('utf-8')
+        return self.decrypt(dat[1:-DIGEST_LEN]).decode('utf-8')
 
     def resetTunnel(self, reason=''):
         if self.tunState == self.TUN_STATE_USING:
