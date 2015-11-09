@@ -65,7 +65,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # in seconds. close tunnel on timeout
-    TUN_PING_INTERVAL = 4  # only tunnels in pool do auto-ping
+    TUN_PING_INTERVAL = 5  # only tunnels in pool do auto-ping
     TUN_OPEN_TIMEOUT = 5  # time to wait after TCP established and before succeeded WS handshake
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
@@ -180,7 +180,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
-factory.autoPingTimeout = 3
+factory.autoPingTimeout = 5
 factory.openHandshakeTimeout = 10
 
 
