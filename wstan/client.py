@@ -6,7 +6,7 @@ import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import parse_socks_addr, loop, config, try_intercept_html
+from wstan import parse_socks_addr, loop, config, can_return_error_page, gen_error_page
 
 
 # noinspection PyAttributeOutsideInit
@@ -75,7 +75,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.lastIdleTime = None
         self.checkTimeoutTask = None
         self.tunOpen = asyncio.Future()
-        self.pool = None
+        self.inPool = False
+        self.canReturnErrorPage = False
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
@@ -113,21 +114,23 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             msg = self.parseResetMessage(dat)
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
+                if self.canReturnErrorPage:
+                    self._writer.write(gen_error_page("can't connect to destination", msg))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState != self.TUN_STATE_USING:
                 # why this happens?
                 return
+            self.canReturnErrorPage = False
             self._writer.write(dat)
         else:
             logging.error('wrong command')
 
     def onClose(self, *args, **kwargs):
         super().onClose(*args, **kwargs)
-        if self.pool:
+        if self.inPool:
             self.pool.remove(self)
-            self.pool = None
 
     @classmethod
     @asyncio.coroutine
@@ -148,7 +151,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         else:
             assert not tun.checkTimeoutTask
             tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
-            tun.pool = cls.pool
+            tun.inPool = True
             tun.enableAutoPing(cls.TUN_PING_INTERVAL)
             cls.pool.append(tun)
 
@@ -160,7 +163,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun = WSTunClientProtocol.pool.popleft()
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
-            tun.pool = None
+            tun.inPool = False
             tun.disableAutoPing()
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
@@ -220,12 +223,14 @@ def socks5_tcp_handler(reader, writer):
     if not dat:
         return writer.close()
 
+    canErr = can_return_error_page(dat)
     try:
         tun = yield from WSTunClientProtocol.getOrCreate(addr_header, dat)
     except Exception as e:
-        logging.error('failed to establish tunnel: %s' % e)
-        try_intercept_html(dat, str(e), writer)
+        if canErr:
+            writer.write(gen_error_page("can't connect to wstan server", str(e)))
         return writer.close()
+    tun.canReturnErrorPage = canErr
     tun.setProxy(reader, writer)
 
 

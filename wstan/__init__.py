@@ -37,9 +37,9 @@ _error_page = '''<!DOCTYPE html>
   </head>
   <body>
     <div id="frame">
-      <h1>wstan error: can't connect to wstan server</h1>
+      <h1>wstan error: {title}</h1>
       <hr />
-      <p>{info}</p>
+      <p>{detail}</p>
     </div>
   </body>
 </html>
@@ -119,15 +119,20 @@ def load_config():
     return args
 
 
-def try_intercept_html(dat, info, writer):
-    if not dat.startswith(b'GET') or not any(_accept_html.match(i) for i in dat.split(b'\r\n')):
-        return
+def can_return_error_page(dat):
+    if not dat.startswith(b'GET'):
+        return False
+    if not any(_accept_html.match(i) for i in dat.split(b'\r\n')):
+        return False
+    return True
 
-    body = _error_page.format(info=info).encode()
+
+def gen_error_page(title, detail):
+    body = _error_page.format(title=title, detail=detail).encode()
     header = '\r\n'.join(
         ['HTTP/1.1 599 WSTAN ERROR', 'Content-Type: text/html; charset=UTF-8',
          'Content-Length: %d' % len(body), '', '']).encode()
-    writer.write(header + body)
+    return header + body
 
 
 def main_entry():
