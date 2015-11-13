@@ -176,7 +176,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 yield from asyncio.wait_for(tun.tunOpen, cls.TUN_OPEN_TIMEOUT)
             except asyncio.TimeoutError:
                 tun.dropConnection()
-                raise
+                raise ConnectionRefusedError(tun.wasNotCleanReason)
         return tun
 
 
