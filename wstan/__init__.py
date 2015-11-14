@@ -91,9 +91,7 @@ def load_config():
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
     # local side config
-    parser.add_argument('-a', '--addr', help='listen address of local SOCKS server (defaults localhost)',
-                        default='localhost')
-    parser.add_argument('-p', '--port', help='listen port of local SOCKS server (defaults 1080)',
+    parser.add_argument('-p', '--port', help='listen port of SOCKS server at localhost (defaults 1080)',
                         type=int, default=1080)
     # remote side config
     parser.add_argument('-t', '--tun-addr', help='listen address of server, override URI')

@@ -189,6 +189,8 @@ factory.openHandshakeTimeout = 10
 
 @asyncio.coroutine
 def socks5_tcp_handler(reader, writer):
+    # these codes assume one send cause one recv, because SOCKS server is at localhost
+
     # handle auth method selection
     dat = yield from reader.read(257)
     if len(dat) < 2 or dat[0] != 0x05 or len(dat) != dat[1] + 2:
@@ -236,8 +238,8 @@ def socks5_tcp_handler(reader, writer):
 
 def main():
     server = loop.run_until_complete(
-        asyncio.start_server(socks5_tcp_handler, config.addr, config.port))
-    print('wstan client -- SOCKS v5 server listen on %s:%d' % (config.addr, config.port))
+        asyncio.start_server(socks5_tcp_handler, 'localhost', config.port))
+    print('wstan client -- SOCKS v5 server listen on localhost:%d' % config.port)
     try:
         loop.run_forever()
     finally:
