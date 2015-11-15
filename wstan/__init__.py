@@ -1,7 +1,10 @@
 import logging
 import socket
 import struct
+import hashlib
+import base64
 import sys
+import os
 import re
 
 __author__ = 'krrr'
@@ -90,6 +93,7 @@ def load_config():
                    action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
+    parser.add_argument('-z', '--compatible', help='usable when server is behind WS proxy', action='store_true')
     # local side config
     parser.add_argument('-p', '--port', help='listen port of SOCKS server at localhost (defaults 1080)',
                         type=int, default=1080)
@@ -114,6 +118,11 @@ def load_config():
         print('error: invalid key')
         sys.exit(1)
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
+    if args.compatible:
+        sha1 = hashlib.sha1()
+        sha1.update(args.key)
+        d = sha1.digest()[-1]
+        args.cookie_key = '_' + chr((d % 26) + 65)  # an upper case character
     return args
 
 
@@ -143,8 +152,7 @@ def main_entry():
                         format='{levelname}: {message}', style='{')
 
     if config.gen_key:
-        from wstan.crypto import generate_key
-        return print('A fresh random key:', generate_key().decode())
+        return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())
 
     if config.server:
         from wstan.server import main

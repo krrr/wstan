@@ -16,6 +16,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def __init__(self):
         super().__init__()
         self.customUriPath = '/'
+        self.customWsKey = None
         self.delayedHandshake = asyncio.Future()
 
     def enableAutoPing(self, interval):
@@ -42,7 +43,10 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def restartHandshake(self):
         """Customize handshake HTTP header."""
         asyncio.wait_for(self.delayedHandshake, None)
-        assert self.websocket_key
+        if config.compatible:
+            self.websocket_key = base64.b64encode(os.urandom(16))
+        else:
+            self.websocket_key = self.customWsKey
         request = [
             'GET %s HTTP/1.1' % self.customUriPath,
             'Host: %s:%d' % (self.factory.host, self.factory.port),
@@ -56,6 +60,9 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
             '',
             ''  # ends with \r\n\r\n
         ]
+        if config.compatible:
+            # store custom ws key in cookie to prevent it from being changed by ws proxy
+            request.insert(2, 'Cookie: %s=%s' % (config.cookie_key, self.customWsKey.decode()))
         self.http_request_data = '\r\n'.join(request).encode('utf8')
         self.sendData(self.http_request_data)
         if self.debug:
@@ -80,7 +87,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
-        self.websocket_key = base64.b64encode(nonce)
+        self.customWsKey = base64.b64encode(nonce)
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
         def resetTunnel(self, reason=''):
@@ -100,9 +107,13 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         if not config.debug:
             self.customUriPath = None  # save memory
         if not config.tun_ssl:
-            # SHA-1 has 20 bytes
-            self.initCipher(base64.b64decode(self.http_headers['sec-websocket-accept'])[:16],
-                            decryptor=True)
+            if config.compatible:
+                nonceB64 = self.http_headers['cookie'].lstrip(config.cookie_key + '=')
+                nonce = base64.b64decode(nonceB64)
+            else:
+                # SHA-1 has 20 bytes
+                nonce = base64.b64decode(self.http_headers['sec-websocket-accept'])[:16]
+            self.initCipher(nonce, decryptor=True)
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
