@@ -1,13 +1,10 @@
 import asyncio
 import logging
 import base64
-import hashlib
-import os
-from binascii import Error as Base64Error
 from autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
-from wstan import loop, config
+from wstan import loop, config, get_sha1, Base64Error
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
@@ -27,13 +24,14 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 nonceB64 = cookie.lstrip(config.cookie_key + '=')
             else:
                 nonceB64 = request.headers['sec-websocket-key']
+            nonce = base64.b64decode(nonceB64)
             try:
-                self.initCipher(base64.b64decode(nonceB64), decryptor=True)
+                self.initCipher(nonce, decryptor=True)
             except Exception as e:
                 logging.error('failed to initialize cipher: %s' % e)
                 raise ConnectionDeny(400)
         else:
-            nonceB64 = None
+            nonceB64 = nonce = None  # for decrypting
 
         self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')[:2]
         try:
@@ -47,19 +45,16 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                           (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
 
-        self.factory.headers = None
         if not config.tun_ssl:
             if config.compatible:
-                encNonce = os.urandom(16)
-                cookieValue = base64.b64encode(encNonce).decode()
-                self.factory.headers = {'Cookie': '%s=%s' % (config.cookie_key, cookieValue)}
-                self.initCipher(encNonce, encryptor=True)
+                # avoid generating a new random nonce for encrypting, and client will do same
+                # calculating to get this nonce
+                encNonce = get_sha1(nonce)[:16]
             else:
                 # repeat calculation in websocket library so that key in WS handshake reply
                 # is the same as this one
-                sha1 = hashlib.sha1()
-                sha1.update(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-                self.initCipher(sha1.digest()[:16], encryptor=True)
+                encNonce = get_sha1(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")[:16]
+            self.initCipher(encNonce, encryptor=True)
 
         self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
 

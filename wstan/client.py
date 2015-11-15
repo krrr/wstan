@@ -6,7 +6,8 @@ import base64
 from collections import deque
 from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import parse_socks_addr, loop, config, can_return_error_page, gen_error_page
+from wstan import (parse_socks_addr, loop, config, can_return_error_page,
+                   gen_error_page, get_sha1)
 
 
 # noinspection PyAttributeOutsideInit
@@ -87,7 +88,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
-        self.customWsKey = base64.b64encode(nonce)
+        self.customWsKey = base64.b64encode(nonce)  # nonce used to encrypt in B64
 
     if TUN_MAX_IDLE_TIMEOUT <= 0:
         def resetTunnel(self, reason=''):
@@ -108,8 +109,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.customUriPath = None  # save memory
         if not config.tun_ssl:
             if config.compatible:
-                nonceB64 = self.http_headers['cookie'].lstrip(config.cookie_key + '=')
-                nonce = base64.b64decode(nonceB64)
+                nonce = get_sha1(base64.b64decode(self.customWsKey))[:16]
             else:
                 # SHA-1 has 20 bytes
                 nonce = base64.b64decode(self.http_headers['sec-websocket-accept'])[:16]

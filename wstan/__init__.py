@@ -6,6 +6,7 @@ import base64
 import sys
 import os
 import re
+from binascii import Error as Base64Error
 
 __author__ = 'krrr'
 __version__ = '0.1'
@@ -80,7 +81,6 @@ def parse_socks_addr(dat, allow_remain=False):
 
 def load_config():
     import argparse
-    import base64
     from autobahn.websocket.protocol import parseWsUrl
 
     parser = argparse.ArgumentParser(description='wstan')
@@ -105,23 +105,22 @@ def load_config():
         sys.exit(1)
 
     args = parser.parse_args()
-    if not args.gen_key:  # option -g can be used without URI and key, just like -h
-        for i in ['uri', 'key']:
-            if not getattr(args, i):
-                print('error: %s required' % i)
-                sys.exit(1)
+    if args.gen_key:  # option -g can be used without URI and key, just like -h
+        return args
+    for i in ['uri', 'key']:
+        if not getattr(args, i):
+            print('error: %s required' % i)
+            sys.exit(1)
 
     try:
         args.key = base64.b64decode(args.key)
         assert len(args.key) == 16
-    except Exception:
+    except (Base64Error, AssertionError):
         print('error: invalid key')
         sys.exit(1)
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     if args.compatible:
-        sha1 = hashlib.sha1()
-        sha1.update(args.key)
-        d = sha1.digest()[-1]
+        d = get_sha1(args.key)[-1]
         args.cookie_key = '_' + chr((d % 26) + 65)  # an upper case character
     return args
 
@@ -140,6 +139,12 @@ def gen_error_page(title, detail):
         ['HTTP/1.1 599 WSTAN ERROR', 'Content-Type: text/html; charset=UTF-8',
          'Content-Length: %d' % len(body), '', '']).encode()
     return header + body
+
+
+def get_sha1(dat):
+    sha1 = hashlib.sha1()
+    sha1.update(dat)
+    return sha1.digest()
 
 
 def main_entry():
