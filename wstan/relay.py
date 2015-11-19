@@ -14,12 +14,12 @@ if not config.tun_ssl:
     from cryptography.hazmat.backends import default_backend
 
 
-DIGEST_LEN = 20
+DIGEST_LEN = 10
 TIMESTAMP_LEN = 8  # double
 
 
 def _get_digest(dat):
-    return hmac.new(config.key, dat, hashlib.sha1).digest()
+    return hmac.new(config.key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
 
 
 class FlowControlledWSProtocol(FlowControlMixin, WebSocketProtocol):
@@ -125,6 +125,7 @@ class RelayMixin(FlowControlledWSProtocol):
             try:
                 dat = yield from self._reader.read(self.BUF_SIZE)
             except ConnectionError:
+                # this may also happen in wstan client, but rare, so assume it's in server
                 return self.resetTunnel('connection to target broken')
             if not dat:
                 return self.resetTunnel()

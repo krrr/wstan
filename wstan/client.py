@@ -240,6 +240,7 @@ def socks5_tcp_handler(reader, writer):
     try:
         tun = yield from WSTunClientProtocol.getOrCreate(addr_header, dat)
     except Exception as e:
+        logging.error("can't connect to server: %s" % e)
         if canErr:
             writer.write(gen_error_page("can't connect to wstan server", str(e)))
         return writer.close()
