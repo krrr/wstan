@@ -1,5 +1,6 @@
 # wstan
-Tunneling a TCP connection in WebSocket to circumventing firewalls. It's light and can run on some PaaS (with SSL support).
+Tunneling a TCP connection in WebSocket to circumventing firewalls.
+It's light and can run on some PaaS (with SSL support).
 
 ## Usage
 ```
@@ -25,8 +26,19 @@ optional arguments:
   -r TUN_PORT, --tun-port TUN_PORT
                         listen port of server, override URI
 ```
+Example for OpenShift:
+```sh
+wstan wss://yours.rhcloud.com:8443 KEY -s -z -t $OPENSHIFT_PYTHON_IP -r $OPENSHIFT_PYTHON_PORT  # server
+wstan wss://yours.rhcloud.com:8443 KEY -z # client
+```
 
 ## It's a reinvented wheel
+A experiment that try to make active probing against server side harder while
+still keeping low latency (of connection establishment). It's stateless
+and act as a SOCKS v5 server at localhost (like shadowsocks). TCP-fastopen
+not supported yet, but a connection pool may help you a little.
+WARN: Do not rely it on security
+
 * [chisel](https://github.com/jpillora/chisel)
 * https://github.com/mhzed/wstunnel
 * https://github.com/ffalcinelli/wstunnel
