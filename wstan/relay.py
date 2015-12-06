@@ -7,7 +7,7 @@ import hashlib
 import time
 import random
 from asyncio.streams import FlowControlMixin
-from autobahn.websocket.protocol import WebSocketProtocol
+from wstan.autobahn.websocket.protocol import WebSocketProtocol
 from wstan import config, parse_socks_addr
 if not config.tun_ssl:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -29,7 +29,7 @@ class FlowControlledWSProtocol(FlowControlMixin, WebSocketProtocol):
 
     @asyncio.coroutine
     def drain(self):
-        """Wait for all queued messages be sent."""
+        """Wait for all queued messages to be sent."""
         yield from self._drain_helper()
 
 

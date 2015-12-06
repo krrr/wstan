@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import base64
-from autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
-from autobahn.websocket.types import ConnectionDeny
+from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
+from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
 from wstan import loop, config, get_sha1, Base64Error
 

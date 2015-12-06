@@ -4,7 +4,7 @@ import time
 import os
 import base64
 from collections import deque
-from autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
+from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page,
                    gen_error_page, get_sha1)

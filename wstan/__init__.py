@@ -52,7 +52,7 @@ _error_page = '''<!DOCTYPE html>
 
 def parse_socks_addr(dat, allow_remain=False):
     """Extract address and port from SOCKS request header (only 4 parts:
-    RSV(0x00) | ATYP | DST.ADDR | DST.PORT). These data will also be reused in tunnel server."""
+    RSV(0x00) | ATYP | DST.ADDR | DST.PORT). Those fields will be reused in tunnel server."""
     if not dat or dat[0] != 0x00:
         raise ValueError
     try:
@@ -81,7 +81,7 @@ def parse_socks_addr(dat, allow_remain=False):
 
 def load_config():
     import argparse
-    from autobahn.websocket.protocol import parseWsUrl
+    from wstan.autobahn.websocket.protocol import parseWsUrl
 
     parser = argparse.ArgumentParser(description='wstan')
     # common config

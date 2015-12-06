@@ -8,5 +8,5 @@ setup(name='wstan',
       description='',
       url='https://krrr.github.io',
       packages=['wstan'],
-      requires=['autobahn', 'cryptography'],
+      requires=['cryptography'],
       entry_points={'console_scripts': ['wstan = wstan:main_entry']})
