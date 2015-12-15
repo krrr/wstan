@@ -21,20 +21,14 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         self.delayedHandshake = asyncio.Future()
 
     def enableAutoPing(self, interval):
-        try:
-            self.autoPingInterval = interval
-            self.autoPingPendingCall = loop.call_later(interval, self._sendAutoPing)
-        except AttributeError:
-            logging.warning('failed to enable auto-ping, maybe library changed its internal method')
+        self.autoPingInterval = interval
+        self.autoPingPendingCall = loop.call_later(interval, self._sendAutoPing)
 
     def disableAutoPing(self):
-        try:
-            self.autoPingInterval = 0
-            if self.autoPingPendingCall:
-                self.autoPingPendingCall.cancel()
-                self.autoPingPendingCall = None
-        except AttributeError:
-            logging.warning('failed to disable auto-ping')
+        self.autoPingInterval = 0
+        if self.autoPingPendingCall:
+            self.autoPingPendingCall.cancel()
+            self.autoPingPendingCall = None
 
     def startHandshake(self):
         """Delay handshake because some states must be set before handshake (so

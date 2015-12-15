@@ -154,7 +154,8 @@ def main_entry():
     config = load_config()
     loop = asyncio.get_event_loop()
     logging.basicConfig(level=logging.DEBUG if config.debug else logging.INFO,
-                        format='{levelname}: {message}', style='{')
+                        format='%(asctime)s %(levelname).1s: %(message)s',
+                        datefmt='%m-%d %H:%M:%S')
 
     if config.gen_key:
         return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())

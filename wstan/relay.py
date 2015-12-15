@@ -115,7 +115,7 @@ class RelayMixin(FlowControlledWSProtocol):
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""
-        logging.debug('reset tunnel succeed')
+        logging.debug('tunnel reset succeed')
         self._writer = self._reader = self._pushToTunTask = None
         self.tunState = self.TUN_STATE_IDLE
 
@@ -172,7 +172,8 @@ class RelayMixin(FlowControlledWSProtocol):
                 self._writer.close()
             if self._pushToTunTask:
                 self._pushToTunTask.cancel()
-            logging.warning('tunnel broken: %s' % (reason or code or 'unknown reason'))
+            desc = ': %s' % (reason or code or 'unknown reason') if config.debug else ''
+            logging.warning('tunnel broken' + desc)
         if config.debug:
             self.allConn.remove(self)
             logging.debug('tunnel closed (total %d)' % len(self.allConn))
