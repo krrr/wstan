@@ -8,7 +8,6 @@ import os
 import re
 from binascii import Error as Base64Error
 
-__author__ = 'krrr'
 __version__ = '0.1'
 
 # global variables shared between modules
