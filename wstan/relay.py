@@ -52,7 +52,7 @@ class RelayMixin(FlowControlledWSProtocol):
         self._reader = None
         self._writer = None
         self._pushToTunTask = None
-        # they do nothing if if websocket is not wrapped in SSL
+        # they do nothing if websocket is not wrapped in SSL
         self.encrypt = self.decrypt = lambda dat: dat
         if config.debug:
             self.allConn.add(self)
