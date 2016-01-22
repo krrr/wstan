@@ -13,7 +13,9 @@ __version__ = '0.1'
 # global variables shared between modules
 config = loop = None
 
-_accept_html = re.compile(rb'^Accept:.*text/html', re.IGNORECASE)
+_http_req = re.compile(rb'^(GET|POST|HEAD|CONNECT|OPTIONS|PUT|DELETE|TRACE|PATCH) ')
+_accept_html = re.compile(rb'^Accept:[^\r]*text/html', re.IGNORECASE)
+_keep_alive = re.compile(rb'^Connection:[^\r]*keep-alive$', re.IGNORECASE)
 _error_page = '''<!DOCTYPE html>
 <html>
   <head>
@@ -49,9 +51,13 @@ _error_page = '''<!DOCTYPE html>
 '''
 
 
+def make_socks_addr(host, port):
+    return b'\x00\x03' + bytes([len(host)]) + host.encode('ascii') + struct.pack('>H', port)
+
+
 def parse_socks_addr(dat, allow_remain=False):
     """Extract address and port from SOCKS request header (only 4 parts:
-    RSV(0x00) | ATYP | DST.ADDR | DST.PORT). Those fields will be reused in tunnel server."""
+    RSV(0x00) | ATYP | DST.ADDR | DST.PORT). The header will be reused in tunnel server."""
     if not dat or dat[0] != 0x00:
         raise ValueError
     try:
@@ -94,11 +100,11 @@ def load_config():
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-z', '--compatible', help='usable when server is behind WS proxy', action='store_true')
     # local side config
-    parser.add_argument('-p', '--port', help='listen port of SOCKS server at localhost (defaults 1080)',
+    parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
                         type=int, default=1080)
     # remote side config
-    parser.add_argument('-t', '--tun-addr', help='listen address of server, override URI')
-    parser.add_argument('-r', '--tun-port', help='listen port of server, override URI', type=int)
+    parser.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')
+    parser.add_argument('-r', '--tun-port', help='listen port of server, overrides URI', type=int)
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
@@ -124,12 +130,20 @@ def load_config():
     return args
 
 
+def http_die_soon(req):
+    """Disable keep-alive to make HTTP proxy act like SOCKS. By doing this
+    wstan server can remain unchanged, but it will increase latency."""
+    dropped = [i for i in req.split(b'\r\n') if not _keep_alive.match(i)]
+    end = dropped.index(b'')
+    return b'\r\n'.join(dropped[:end] + [b'Connection: close'] + dropped[end:])
+
+
+def is_http_req(dat):
+    return bool(_http_req.match(dat))
+
+
 def can_return_error_page(dat):
-    if not dat.startswith(b'GET'):
-        return False
-    if not any(_accept_html.match(i) for i in dat.split(b'\r\n')):
-        return False
-    return True
+    return bool(_http_req.match(dat) and any(map(_accept_html.match, dat.split(b'\r\n'))))
 
 
 def gen_error_page(title, detail):

@@ -7,7 +7,7 @@ from collections import deque
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page,
-                   gen_error_page, get_sha1)
+                   gen_error_page, get_sha1, make_socks_addr, http_die_soon)
 
 
 # noinspection PyAttributeOutsideInit
@@ -161,27 +161,37 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @asyncio.coroutine
-    def getOrCreate(cls, addrHeader, dat):
-        if WSTunClientProtocol.pool:
-            logging.debug('reuse tunnel from pool (total %s)' % len(WSTunClientProtocol.pool))
-            tun = WSTunClientProtocol.pool.popleft()
+    def startProxy(cls, addrHeader, dat, reader, writer):
+        canErr = can_return_error_page(dat)
+
+        if cls.pool:
+            logging.debug('reuse tunnel from pool (total %s)' % len(cls.pool))
+            tun = cls.pool.popleft()
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
             tun.inPool = False
             tun.disableAutoPing()
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
-            tun = (yield from loop.create_connection(
-                factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
-            # lower latency by sending relay header and data in ws handshake
-            tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
-            tun.restartHandshake()
             try:
-                yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
-            except asyncio.TimeoutError:
-                tun.dropConnection()
-                raise ConnectionRefusedError(tun.wasNotCleanReason)
-        return tun
+                tun = (yield from loop.create_connection(
+                    factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
+                # lower latency by sending relay header and data in ws handshake
+                tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
+                tun.restartHandshake()
+                try:
+                    yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
+                except asyncio.TimeoutError:
+                    tun.dropConnection()
+                    # sometimes reason can be None in extremely poor network
+                    raise ConnectionRefusedError(tun.wasNotCleanReason or '')
+            except Exception as e:
+                logging.error("can't connect to server: %s" % e)
+                if canErr:
+                    writer.write(gen_error_page("can't connect to wstan server", str(e)))
+
+        tun.canReturnErrorPage = canErr
+        tun.setProxy(reader, writer)
 
 
 factory = WebSocketClientFactory(config.uri)
@@ -191,22 +201,73 @@ factory.autoPingTimeout = 5
 factory.openHandshakeTimeout = 10  # timeout after TCP established and before succeeded WS handshake
 
 
-@asyncio.coroutine
-def socks5_tcp_handler(reader, writer):
-    # these codes assume one send cause one recv, because SOCKS server is at localhost
+# below assume one send cause one recv, because server is at localhost
 
+@asyncio.coroutine
+def dispatch_proxy(reader, writer):
+    dat = yield from reader.read(2048)
+    if not dat:
+        return writer.close()
+    handler = socks5_tcp_handler if dat[0] == 0x05 else http_proxy_handler
+    try:
+        yield from handler(dat, reader, writer)
+    except ConnectionError:
+        writer.close()
+
+
+@asyncio.coroutine
+def http_proxy_handler(dat, reader, writer):
+    if dat[:3] not in (b'GET', b'POS', b'HEA', b'CON', b'OPT', b'PUT', b'DEL', b'PAT', b'TRA'):
+        logging.warning('bad http proxy request')
+        return writer.close()
+
+    # get complete request line
+    while True:  # the line is not likely to be that long
+        end = dat.find(b'\r\n')
+        if end != -1:
+            break
+        r = yield from reader.read(1024)
+        if not r:
+            return writer.close()
+        dat += r
+    req_line, rest_dat = dat[:end], dat[end:]
+
+    method, url, ver = req_line.split()
+    if method == b'CONNECT':  # e.g. g.cn:443
+        host, port = url.decode().split(':')
+        port = int(port)
+    else:  # e.g. http://g.cn/aa
+        url = url[7:]
+        i = url.find(b'/')
+        path = url[i:]
+        host, *port = url[:i].split(b':')
+        port = int(port[0]) if port else 80
+        host = host.decode()
+    logging.info('requesting %s:%d' % (host, port))
+    addr_header = make_socks_addr(host, port) 
+
+    if method == b'CONNECT':
+        writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+        dat = yield from reader.read(2048)
+        if not dat:
+            return writer.close()
+    else:
+        dat = method + b' ' + path + b' ' + ver + rest_dat
+        dat = http_die_soon(dat)  # let target know keep-alive is not supported
+
+    yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
+
+
+@asyncio.coroutine
+def socks5_tcp_handler(dat, reader, writer):
     # handle auth method selection
-    dat = yield from reader.read(257)
-    if len(dat) < 2 or dat[0] != 0x05 or len(dat) != dat[1] + 2:
-        logging.warning('local SOCKS v5 server got unknown request')
+    if len(dat) < 2 or len(dat) != dat[1] + 2:
+        logging.warning('bad SOCKS v5 request')
         return writer.close()
     writer.write(b'\x05\x00')  # \x00 == NO AUTHENTICATION REQUIRED
 
     # handle relay request
-    try:
-        dat = yield from reader.read(262)
-    except ConnectionError:
-        return writer.close()
+    dat = yield from reader.read(262)
     try:
         cmd, addr_header = dat[1], dat[2:]
         target_addr, target_port = parse_socks_addr(addr_header)
@@ -222,29 +283,17 @@ def socks5_tcp_handler(reader, writer):
     # But SOCKS client can't get real reason when error happens (Firefox always display
     # connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
-    try:
-        dat = yield from reader.read(2048)
-    except ConnectionError:
-        dat = None
+    dat = yield from reader.read(2048)
     if not dat:
         return writer.close()
 
-    canErr = can_return_error_page(dat)
-    try:
-        tun = yield from WSTunClientProtocol.getOrCreate(addr_header, dat)
-    except Exception as e:
-        logging.error("can't connect to server: %s" % e)
-        if canErr:
-            writer.write(gen_error_page("can't connect to wstan server", str(e)))
-        return writer.close()
-    tun.canReturnErrorPage = canErr
-    tun.setProxy(reader, writer)
+    yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
 
 
 def main():
     server = loop.run_until_complete(
-        asyncio.start_server(socks5_tcp_handler, 'localhost', config.port))
-    print('wstan client -- SOCKS v5 server listen on localhost:%d' % config.port)
+        asyncio.start_server(dispatch_proxy, 'localhost', config.port))
+    print('wstan client -- SOCKS5/HTTP(S) server listen on localhost:%d' % config.port)
     try:
         loop.run_forever()
     finally:
