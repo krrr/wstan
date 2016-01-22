@@ -88,13 +88,13 @@ def load_config():
     import argparse
     from wstan.autobahn.websocket.protocol import parseWsUrl
 
-    parser = argparse.ArgumentParser(description='wstan')
+    parser = argparse.ArgumentParser(description='Tunneling TCP connection in WebSocket')
     # common config
     parser.add_argument('-g', '--gen-key', help='generate a key and exit', action='store_true')
     parser.add_argument('uri', help='URI of server', nargs='?')
     parser.add_argument('key', help='base64 encoded 16-byte key', nargs='?')
     g = parser.add_mutually_exclusive_group()
-    g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS v5 server)',
+    g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS5/HTTP(S) server)',
                    action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
