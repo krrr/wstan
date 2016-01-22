@@ -2,6 +2,13 @@
 Tunneling a TCP connection in WebSocket to circumventing firewalls.
 It's light and can run on some PaaS (with SSL support).
 
+## Features
+* Authentication
+* Dispay error message in browser (plain HTTP only)
+* SOCKS v5 and HTTP(S) in the same port (HTTP proxy is slower)
+
+WARN: Do not rely it on security (encryption always enabled, but is much weaker than SSL)
+
 ## Usage
 ```
 wstan [-h] [-g] [-c | -s] [-d] [-z] [-p PORT] [-t TUN_ADDR]
@@ -56,5 +63,5 @@ still keeping low latency (of connection establishment). It's stateless
 and act as a SOCKS v5 server at localhost (like shadowsocks). TCP-fastopen
 not supported yet, but a connection pool may help you a little.
 
-WARN: Do not rely it on security
+
 
