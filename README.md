@@ -40,6 +40,7 @@ Example:
 # generate a key using "wstan -g"
 wstan ws://yourserver.com KEY -s  # server
 wstan ws://yourserver.com KEY  # client
+# now a proxy server is listening at localhost:1080 (at client side)
 ```
 
 Example for OpenShift with SSL:
@@ -62,6 +63,3 @@ An experiment that try to make active probing against server side harder while
 still keeping low latency (of connection establishment). It's stateless
 and act as a SOCKS v5 server at localhost (like shadowsocks). TCP-fastopen
 not supported yet, but a connection pool may help you a little.
-
-
-
