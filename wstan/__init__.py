@@ -84,6 +84,11 @@ def parse_socks_addr(dat, allow_remain=False):
         raise ValueError
 
 
+def die(reason):
+    print(reason, file=sys.stderr)
+    sys.exit(1)
+
+
 def load_config():
     import argparse
     from wstan.autobahn.websocket.protocol import parseWsUrl
@@ -114,15 +119,13 @@ def load_config():
         return args
     for i in ['uri', 'key']:
         if not getattr(args, i):
-            print('error: %s required' % i)
-            sys.exit(1)
+            die('%s not specified' % i)
 
     try:
         args.key = base64.b64decode(args.key)
         assert len(args.key) == 16
     except (Base64Error, AssertionError):
-        print('error: invalid key')
-        sys.exit(1)
+        die('invalid key')
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     if args.compatible:
         d = get_sha1(args.key)[-1]
@@ -177,4 +180,4 @@ def main_entry():
         from wstan.server import main
     else:
         from wstan.client import main
-    return main()
+    main()

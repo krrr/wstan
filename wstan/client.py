@@ -6,7 +6,7 @@ import base64
 from collections import deque
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import (parse_socks_addr, loop, config, can_return_error_page,
+from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
                    gen_error_page, get_sha1, make_socks_addr, http_die_soon)
 
 
@@ -119,7 +119,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
                 if self.canReturnErrorPage:
-                    self._writer.write(gen_error_page("can't connect to destination", msg))
+                    title, __, reason = msg.partition(':')
+                    self._writer.write(gen_error_page(title, reason))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
@@ -189,7 +190,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 logging.error("can't connect to server: %s" % e)
                 if canErr:
                     writer.write(gen_error_page("can't connect to wstan server", str(e)))
-
+                return
         tun.canReturnErrorPage = canErr
         tun.setProxy(reader, writer)
 
@@ -291,9 +292,12 @@ def socks5_tcp_handler(dat, reader, writer):
 
 
 def main():
-    server = loop.run_until_complete(
-        asyncio.start_server(dispatch_proxy, 'localhost', config.port))
-    print('wstan client -- SOCKS5/HTTP(S) server listen on localhost:%d' % config.port)
+    try:
+        server = loop.run_until_complete(
+            asyncio.start_server(dispatch_proxy, 'localhost', config.port))
+    except OSError:
+        die('wstan client failed to bind on localhost:%d' % config.port)
+    print('wstan client -- SOCKS5/HTTP(S) server listening on localhost:%d' % config.port)
     try:
         loop.run_forever()
     finally:

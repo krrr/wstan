@@ -4,7 +4,7 @@ import base64
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
-from wstan import loop, config, get_sha1, Base64Error
+from wstan import loop, config, die, get_sha1, Base64Error
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
@@ -67,7 +67,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             return self.resetTunnel(reason='failed to connect target: %s' % e)
         logging.info('relay %s <--> %s:%s' % (self.clientInfo, addr, port))
         self.setProxy(reader, writer)
-        assert data, 'some data must be sent after connected to target'
+        assert data, 'some data must be sent right after connected to target'
         writer.write(data)
         self.connectTargetTask = None
 
@@ -136,7 +136,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
 
 def main():
-    addr = config.uri_addr if config.tun_addr is None else config.tun_addr
+    addr = config.tun_addr or config.uri_addr
     port = config.tun_port or config.uri_port
     uri = config.uri
     if config.tun_port and config.tun_port != config.uri_port:
@@ -147,9 +147,11 @@ def main():
     factory.autoPingInterval = 30
     factory.autoPingTimeout = 10
 
-    server = loop.run_until_complete(loop.create_server(factory, addr, port))
-    print('wstan server -- listen on %s:%d' % (addr, port))
-
+    try:
+        server = loop.run_until_complete(loop.create_server(factory, addr, port))
+    except OSError:
+        die('wstan server failed to bind on %s:%d' % (addr, port))
+    print('wstan server -- listening on %s:%d' % (addr, port))
     try:
         loop.run_forever()
     finally:
