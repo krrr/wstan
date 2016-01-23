@@ -144,7 +144,7 @@ def main():
     factory = WebSocketServerFactory(uri)
     factory.protocol = WSTunServerProtocol
     factory.server = ''  # hide Server field of handshake HTTP header
-    factory.autoPingInterval = 30
+    factory.autoPingInterval = 75
     factory.autoPingTimeout = 10
 
     try:
