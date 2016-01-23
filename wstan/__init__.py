@@ -8,7 +8,7 @@ import os
 import re
 from binascii import Error as Base64Error
 
-__version__ = '0.1'
+__version__ = '0.2'
 
 # global variables shared between modules
 config = loop = None
