@@ -350,6 +350,8 @@ def main():
     print('wstan client -- SOCKS5/HTTP(S) server listening on localhost:%d' % config.port)
     try:
         loop.run_forever()
+    except KeyboardInterrupt:
+        pass
     finally:
         server.close()
         loop.close()

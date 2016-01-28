@@ -162,6 +162,8 @@ def main():
     print('wstan server -- listening on %s:%d' % (addr, port))
     try:
         loop.run_forever()
+    except KeyboardInterrupt:
+        pass
     finally:
         server.close()
         loop.close()
