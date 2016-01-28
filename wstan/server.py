@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import socket
 import base64
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
@@ -152,6 +153,12 @@ def main():
         server = loop.run_until_complete(loop.create_server(factory, addr, port))
     except OSError:
         die('wstan server failed to bind on %s:%d' % (addr, port))
+    so = server.sockets[0]
+    if len(server.sockets) == 1 and so.family == socket.AF_INET6 and hasattr(socket, 'IPPROTO_IPV6'):
+        # force user to specify URI in wstan server is a bad design, this try to fix
+        # inconvenience in dual stack server
+        so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
+
     print('wstan server -- listening on %s:%d' % (addr, port))
     try:
         loop.run_forever()
