@@ -2,6 +2,7 @@ import logging
 import socket
 import struct
 import hashlib
+import asyncio
 import base64
 import sys
 import os
@@ -173,7 +174,8 @@ def get_sha1(dat):
 
 
 def main_entry():
-    import asyncio
+    if not sys.version_info >= (3, 3, 0):
+        die('Python 3.3 or higher required')
 
     global config, loop
     config = load_config()
