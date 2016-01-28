@@ -1,10 +1,11 @@
 # wstan
-Tunneling a TCP connection in WebSocket to circumventing firewalls.
+Tunneling TCP connections in WebSocket to circumventing firewalls.
 It's light and can run on some PaaS (with SSL support).
 
 ## Features
 * Authentication
-* Dispay error message in browser (plain HTTP only)
+* Proxy support (using HTTP CONNECT; [test your proxy](http://www.websocket.org/echo.html))
+* Display error message in browser (plain HTTP only)
 * SOCKS v5 and HTTP(S) in the same port (HTTP proxy is slower)
 
 WARN: Do not rely it on security (encryption always enabled, but is much weaker than SSL)
@@ -26,7 +27,9 @@ optional arguments:
                         server)
   -s, --server          run as server
   -d, --debug
-  -z, --compatible      usable when server is behind WS proxy
+  -y PROXY, --proxy PROXY
+                        let client use a HTTPS proxy (host:port)
+  -z, --compatible      useful when server is behind WS proxy
   -p PORT, --port PORT  listen port of SOCKS5/HTTP(S) server at localhost
                         (defaults 1080)
   -t TUN_ADDR, --tun-addr TUN_ADDR

@@ -8,7 +8,7 @@ import os
 import re
 from binascii import Error as Base64Error
 
-__version__ = '0.2'
+__version__ = '0.2.1'
 
 # global variables shared between modules
 config = loop = None
@@ -93,7 +93,8 @@ def load_config():
     import argparse
     from wstan.autobahn.websocket.protocol import parseWsUrl
 
-    parser = argparse.ArgumentParser(description='Tunneling TCP connection in WebSocket')
+    parser = argparse.ArgumentParser(
+        description='Ver %s | Tunneling TCP in WebSocket' % __version__)
     # common config
     parser.add_argument('-g', '--gen-key', help='generate a key and exit', action='store_true')
     parser.add_argument('uri', help='URI of server', nargs='?')
