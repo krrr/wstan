@@ -4,10 +4,12 @@ import time
 import os
 import base64
 from collections import deque
+from wstan.autobahn.websocket.protocol import parseHttpHeader
+from wstan.autobahn.asyncio import create_sock
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
-                   gen_error_page, get_sha1, make_socks_addr, http_die_soon)
+                   gen_error_page, get_sha1, make_socks_addr, http_die_soon, is_http_req)
 
 
 # noinspection PyAttributeOutsideInit
@@ -31,13 +33,14 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
             self.autoPingPendingCall = None
 
     def startHandshake(self):
-        """Delay handshake because some states must be set before handshake (so
+        """Delay handshake because some states must be set right before handshake (so
         they can't be set in factory)."""
         self.delayedHandshake.set_result(None)
 
+    @asyncio.coroutine
     def restartHandshake(self):
-        """Customize handshake HTTP header."""
-        asyncio.wait_for(self.delayedHandshake, None)
+        """Resume delayed handshake. It enable us to customize handshake HTTP header."""
+        yield from asyncio.wait_for(self.delayedHandshake, None)
         if config.compatible:
             self.websocket_key = base64.b64encode(os.urandom(16))
         else:
@@ -67,7 +70,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     TUN_MAX_IDLE_TIMEOUT = 35  # close tunnel in pool on timeout (in seconds)
-    TUN_PING_INTERVAL = 5  # only tunnels in pool do auto-ping
+    TUN_PING_INTERVAL = 8  # only tunnels in pool do auto-ping
     POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
 
@@ -175,22 +178,28 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
             try:
+                sock = None
+                if config.proxy:
+                    sock = yield from setup_http_tunnel()
+
                 tun = (yield from loop.create_connection(
-                    factory, config.uri_addr, config.uri_port, ssl=config.tun_ssl))[1]
+                    factory, None if sock else config.uri_addr, None if sock else config.uri_port,
+                    server_hostname=config.uri_addr if config.tun_ssl else None,
+                    sock=sock, ssl=config.tun_ssl))[1]
                 # lower latency by sending relay header and data in ws handshake
                 tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
-                tun.restartHandshake()
+                asyncio.async(tun.restartHandshake())
                 try:
                     yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
                 except asyncio.TimeoutError:
                     tun.dropConnection()
                     # sometimes reason can be None in extremely poor network
-                    raise ConnectionRefusedError(tun.wasNotCleanReason or '')
+                    raise ConnectionError(tun.wasNotCleanReason or '')
             except Exception as e:
                 logging.error("can't connect to server: %s" % e)
                 if canErr:
                     writer.write(gen_error_page("can't connect to wstan server", str(e)))
-                return
+                return writer.close()
         tun.canReturnErrorPage = canErr
         tun.setProxy(reader, writer)
 
@@ -199,10 +208,10 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.autoPingTimeout = 5
-factory.openHandshakeTimeout = 10  # timeout after TCP established and before succeeded WS handshake
+factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
 
 
-# below assume one send cause one recv, because server is at localhost
+# functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
 @asyncio.coroutine
 def dispatch_proxy(reader, writer):
@@ -218,7 +227,7 @@ def dispatch_proxy(reader, writer):
 
 @asyncio.coroutine
 def http_proxy_handler(dat, reader, writer):
-    if dat[:3] not in (b'GET', b'POS', b'HEA', b'CON', b'OPT', b'PUT', b'DEL', b'PAT', b'TRA'):
+    if not is_http_req(dat):
         logging.warning('bad http proxy request')
         return writer.close()
 
@@ -289,6 +298,47 @@ def socks5_tcp_handler(dat, reader, writer):
         return writer.close()
 
     yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
+
+
+@asyncio.coroutine
+def setup_http_tunnel():
+    sock = yield from create_sock(config.proxy_host, config.proxy_port)
+    pair = '%s:%d' % (config.uri_addr, config.uri_port)
+    req = 'CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n' % (pair, pair)
+    loop.sock_sendall(sock, req.encode())
+    dat = yield from loop.sock_recv(sock, 4096)
+    while True:
+        end = dat.find(b'\r\n\r\n')
+        if end != -1:
+            break
+        r = yield from loop.sock_recv(sock, 4096)
+        if not r:
+            return
+        dat += r
+
+    http_response_data = dat[:end+4]
+    http_status_line, http_headers, __ = parseHttpHeader(http_response_data)
+    logging.debug("received HTTP status line for proxy connect request: %s" % http_status_line)
+    logging.debug("received HTTP headers for proxy connect request: %s" % http_headers)
+    sl = http_status_line.split()
+    if len(sl) < 2:
+        raise ConnectionError("bad HTTP response status line '%s'" % http_status_line)
+    try:
+        status_code = int(sl[1].strip())
+    except ValueError:
+        raise ConnectionError("bad HTTP status code ('%s')" % sl[1].strip())
+    if not (200 <= status_code < 300):
+        # FIXME: handle redirects
+        # FIXME: handle authentication required
+        if len(sl) > 2:
+            reason = " - %s" % ''.join(sl[2:])
+        else:
+            reason = ""
+        raise ConnectionError("HTTP proxy connect failed (%d%s)" % (status_code, reason))
+    if dat[end+4:]:
+        logging.warning('got extra data in HTTP proxy resp: %s' % dat[end+4:])
+
+    return sock
 
 
 def main():

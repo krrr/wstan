@@ -100,14 +100,15 @@ def load_config():
     parser.add_argument('key', help='base64 encoded 16-byte key', nargs='?')
     g = parser.add_mutually_exclusive_group()
     g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS5/HTTP(S) server)',
-                   action='store_true')
+                   default=True, action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
-    parser.add_argument('-z', '--compatible', help='usable when server is behind WS proxy', action='store_true')
-    # local side config
+    parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
+    # client config
+    parser.add_argument('-y', '--proxy', help='let client use a HTTPS proxy (host:port)')
     parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
                         type=int, default=1080)
-    # remote side config
+    # server config
     parser.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')
     parser.add_argument('-r', '--tun-port', help='listen port of server, overrides URI', type=int)
     if len(sys.argv) == 1:
@@ -126,7 +127,14 @@ def load_config():
         assert len(args.key) == 16
     except (Base64Error, AssertionError):
         die('invalid key')
+
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
+    if args.proxy and args.client:
+        try:
+            args.proxy_host, port = args.proxy.split(':')
+            args.proxy_port = int(port)
+        except ValueError:
+            dir('invalid proxy format')
     if args.compatible:
         d = get_sha1(args.key)[-1]
         args.cookie_key = '_' + chr((d % 26) + 65)  # an upper case character

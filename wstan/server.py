@@ -146,6 +146,7 @@ def main():
     factory.server = ''  # hide Server field of handshake HTTP header
     factory.autoPingInterval = 75
     factory.autoPingTimeout = 10
+    factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
 
     try:
         server = loop.run_until_complete(loop.create_server(factory, addr, port))

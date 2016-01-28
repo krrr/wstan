@@ -420,13 +420,12 @@ class WebSocketProtocol(object):
     """
 
     # WebSocket protocol state:
-    # (STATE_PROXY_CONNECTING) => STATE_CONNECTING => STATE_OPEN => STATE_CLOSING => STATE_CLOSED
+    # STATE_CONNECTING => STATE_OPEN => STATE_CLOSING => STATE_CLOSED
     #
     STATE_CLOSED = 0
     STATE_CONNECTING = 1
     STATE_CLOSING = 2
     STATE_OPEN = 3
-    STATE_PROXY_CONNECTING = 4
 
     # Streaming Send State
     SEND_STATE_GROUND = 0
@@ -753,7 +752,7 @@ class WebSocketProtocol(object):
             self.wasClean = False
 
         else:
-            # STATE_PROXY_CONNECTING, STATE_CONNECTING
+            # STATE_CONNECTING
             raise Exception("logic error")
 
     def onServerConnectionDropTimeout(self):
@@ -781,7 +780,7 @@ class WebSocketProtocol(object):
         So we drop the connection, but set self.wasClean = False.
         """
         self.openHandshakeTimeoutCall = None
-        if self.state in [WebSocketProtocol.STATE_CONNECTING, WebSocketProtocol.STATE_PROXY_CONNECTING]:
+        if self.state == WebSocketProtocol.STATE_CONNECTING:
             if self.debugCodePaths:
                 self.log.debug("onOpenHandshakeTimeout fired")
             self.wasClean = False
@@ -964,10 +963,7 @@ class WebSocketProtocol(object):
         self.trafficStats = TrafficStats()
 
         # initial state
-        if not self.factory.isServer and self.factory.proxy is not None:
-            self.state = WebSocketProtocol.STATE_PROXY_CONNECTING
-        else:
-            self.state = WebSocketProtocol.STATE_CONNECTING
+        self.state = WebSocketProtocol.STATE_CONNECTING
         self.send_state = WebSocketProtocol.SEND_STATE_GROUND
         self.data = b""
 
@@ -1147,7 +1143,7 @@ class WebSocketProtocol(object):
         """
         if self.state == WebSocketProtocol.STATE_OPEN:
             self.trafficStats.incomingOctetsWireLevel += len(data)
-        elif self.state == WebSocketProtocol.STATE_CONNECTING or self.state == WebSocketProtocol.STATE_PROXY_CONNECTING:
+        elif self.state == WebSocketProtocol.STATE_CONNECTING:
             self.trafficStats.preopenIncomingOctetsWireLevel += len(data)
 
         if self.logOctets:
@@ -1167,12 +1163,6 @@ class WebSocketProtocol(object):
             #
             while self.processData() and self.state != WebSocketProtocol.STATE_CLOSED:
                 pass
-
-        # need to establish proxy connection
-        #
-        elif self.state == WebSocketProtocol.STATE_PROXY_CONNECTING:
-
-            self.processProxyConnect()
 
         # WebSocket needs handshake
         #
@@ -1197,12 +1187,6 @@ class WebSocketProtocol(object):
         #
         else:
             raise Exception("invalid state")
-
-    def processProxyConnect(self):
-        """
-        Process proxy connect.
-        """
-        raise Exception("must implement proxy connect (client or server) in derived class")
 
     def processHandshake(self):
         """
@@ -1233,7 +1217,7 @@ class WebSocketProtocol(object):
 
                 if self.state == WebSocketProtocol.STATE_OPEN:
                     self.trafficStats.outgoingOctetsWireLevel += len(e[0])
-                elif self.state == WebSocketProtocol.STATE_CONNECTING or self.state == WebSocketProtocol.STATE_PROXY_CONNECTING:
+                elif self.state == WebSocketProtocol.STATE_CONNECTING:
                     self.trafficStats.preopenOutgoingOctetsWireLevel += len(e[0])
 
                 if self.logOctets:
@@ -1282,7 +1266,7 @@ class WebSocketProtocol(object):
 
                 if self.state == WebSocketProtocol.STATE_OPEN:
                     self.trafficStats.outgoingOctetsWireLevel += len(data)
-                elif self.state == WebSocketProtocol.STATE_CONNECTING or self.state == WebSocketProtocol.STATE_PROXY_CONNECTING:
+                elif self.state == WebSocketProtocol.STATE_CONNECTING:
                     self.trafficStats.preopenOutgoingOctetsWireLevel += len(data)
 
                 if self.logOctets:
@@ -1868,7 +1852,7 @@ class WebSocketProtocol(object):
             if self.debugCodePaths:
                 self.log.debug("ignoring sendCloseFrame since connection already closed")
 
-        elif self.state in [WebSocketProtocol.STATE_PROXY_CONNECTING, WebSocketProtocol.STATE_CONNECTING]:
+        elif self.state == WebSocketProtocol.STATE_CONNECTING:
             raise Exception("cannot close a connection not yet connected")
 
         elif self.state == WebSocketProtocol.STATE_OPEN:
@@ -2388,9 +2372,6 @@ class WebSocketServerProtocol(WebSocketProtocol):
         """
         WebSocketProtocol._connectionLost(self, reason)
         self.factory.countConnections -= 1
-
-    def processProxyConnect(self):
-        raise Exception("Autobahn isn't a proxy server")
 
     def processHandshake(self):
         """
@@ -3283,20 +3264,14 @@ class WebSocketClientProtocol(WebSocketProtocol):
     def _connectionMade(self):
         """
         Called by network framework when new transport connection to server was established. Default
-        implementation will start the initial WebSocket opening handshake (or proxy connect).
+        implementation will start the initial WebSocket opening handshake.
         When overriding in derived class, make sure to call this base class
         implementation _before_ your code.
         """
         WebSocketProtocol._connectionMade(self)
         if self.debug:
             self.log.debug("connection to %s established" % self.peer)
-
-        if not self.factory.isServer and self.factory.proxy is not None:
-            # start by doing a HTTP/CONNECT for explicit proxies
-            self.startProxyConnect()
-        else:
-            # immediately start with the WebSocket opening handshake
-            self.startHandshake()
+        self.startHandshake()
 
     def _connectionLost(self, reason):
         """
@@ -3306,100 +3281,6 @@ class WebSocketClientProtocol(WebSocketProtocol):
         implementation _after_ your code.
         """
         WebSocketProtocol._connectionLost(self, reason)
-
-    def startProxyConnect(self):
-        """
-        Connect to explicit proxy.
-        """
-        # construct proxy connect HTTP request
-        #
-        request = "CONNECT %s:%d HTTP/1.1\x0d\x0a" % (self.factory.host.encode("utf-8"), self.factory.port)
-        request += "Host: %s:%d\x0d\x0a" % (self.factory.host.encode("utf-8"), self.factory.port)
-        request += "\x0d\x0a"
-
-        if self.debug:
-            self.log.debug(request)
-
-        self.sendData(request)
-
-    def processProxyConnect(self):
-        """
-        Process HTTP/CONNECT response from server.
-        """
-        # only proceed when we have fully received the HTTP request line and all headers
-        #
-        end_of_header = self.data.find(b"\x0d\x0a\x0d\x0a")
-        if end_of_header >= 0:
-
-            http_response_data = self.data[:end_of_header + 4]
-            if self.debug:
-                self.log.debug("received HTTP response:\n\n%s\n\n" % http_response_data)
-
-            # extract HTTP status line and headers
-            #
-            (http_status_line, http_headers, http_headers_cnt) = parseHttpHeader(http_response_data)
-
-            # validate proxy connect response
-            #
-            if self.debug:
-                self.log.debug("received HTTP status line for proxy connect request : %s" % str(http_status_line))
-                self.log.debug("received HTTP headers for proxy connect request : %s" % str(http_headers))
-
-            # Response Line
-            #
-            sl = http_status_line.split()
-            if len(sl) < 2:
-                return self.failProxyConnect("Bad HTTP response status line '%s'" % http_status_line)
-
-            # HTTP version
-            #
-            http_version = sl[0].strip()
-            if http_version != "HTTP/1.1":
-                return self.failProxyConnect("Unsupported HTTP version ('%s')" % http_version)
-
-            # HTTP status code
-            #
-            try:
-                status_code = int(sl[1].strip())
-            except ValueError:
-                return self.failProxyConnect("Bad HTTP status code ('%s')" % sl[1].strip())
-
-            if not (200 <= status_code < 300):
-
-                # FIXME: handle redirects
-                # FIXME: handle authentication required
-
-                if len(sl) > 2:
-                    reason = " - %s" % ''.join(sl[2:])
-                else:
-                    reason = ""
-                return self.failProxyConnect("HTTP proxy connect failed (%d%s)" % (status_code, reason))
-
-            # Ok, got complete response for HTTP/CONNECT, remember rest (if any)
-            #
-            self.data = self.data[end_of_header + 4:]
-
-            # opening handshake completed, move WebSocket connection into OPEN state
-            #
-            self.state = WebSocketProtocol.STATE_CONNECTING
-
-            # process rest of buffered data, if any
-            #
-            if len(self.data) > 0:
-                self.consumeData()
-
-            # now start WebSocket opening handshake
-            #
-            self.startHandshake()
-
-    def failProxyConnect(self, reason):
-        """
-        During initial explicit proxy connect, the server response indicates some failure and we drop the
-        connection.
-        """
-        if self.debug:
-            self.log.debug("failing proxy connect ('%s')" % reason)
-        self.dropConnection(abort=True)
 
     def startHandshake(self):
         """
@@ -3483,8 +3364,6 @@ class WebSocketClientProtocol(WebSocketProtocol):
         if end_of_header >= 0:
 
             self.http_response_data = self.data[:end_of_header + 4]
-            if self.debug:
-                self.log.debug("received HTTP response:\n\n%s\n\n" % self.http_response_data)
 
             # extract HTTP status line and headers
             #
@@ -3713,7 +3592,6 @@ class WebSocketClientFactory(WebSocketFactory):
                  protocols=None,
                  useragent="AutobahnPython/%s" % __version__,
                  headers=None,
-                 proxy=None,
                  debug=False,
                  debugCodePaths=False):
         """
@@ -3735,8 +3613,6 @@ class WebSocketClientFactory(WebSocketFactory):
         :type useragent: str
         :param headers: An optional mapping of additional HTTP headers to send during the WebSocket opening handshake.
         :type headers: dict
-        :param proxy: Explicit proxy server to use; a dict with ``host`` and ``port`` keys
-        :type proxy: dict or None
         :param debug: Debug mode (default: `False`).
         :type debug: bool
         :param debugCodePaths: Debug code paths mode (default: `False`).
@@ -3755,7 +3631,7 @@ class WebSocketClientFactory(WebSocketFactory):
 
         # default WS session parameters
         #
-        self.setSessionParameters(url, origin, protocols, useragent, headers, proxy)
+        self.setSessionParameters(url, origin, protocols, useragent, headers)
 
         # default WebSocket protocol options
         #
@@ -3766,8 +3642,7 @@ class WebSocketClientFactory(WebSocketFactory):
                              origin=None,
                              protocols=None,
                              useragent=None,
-                             headers=None,
-                             proxy=None):
+                             headers=None):
         """
         Set WebSocket session parameters.
 
@@ -3783,8 +3658,6 @@ class WebSocketClientFactory(WebSocketFactory):
         :type useragent: str
         :param headers: An optional mapping of additional HTTP headers to send during the WebSocket opening handshake.
         :type headers: dict
-        :param proxy: (Optional) a dict with ``host`` and ``port`` keys specifying a proxy to use
-        :type proxy: dict or None
         """
         # parse WebSocket URI into components
         (isSecure, host, port, resource, path, params) = parseWsUrl(url or "ws://localhost")
@@ -3800,8 +3673,6 @@ class WebSocketClientFactory(WebSocketFactory):
         self.protocols = protocols or []
         self.useragent = useragent
         self.headers = headers or {}
-
-        self.proxy = proxy
 
     def resetProtocolOptions(self):
         """
