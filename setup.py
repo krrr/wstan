@@ -4,16 +4,19 @@ import wstan
 
 
 setup(name='wstan',
-      author='krrr',
-      author_email='guogaishiwo@gmail.com',
       version=wstan.__version__,
       description='Tunneling TCP in WebSocket',
+      author='krrr',
+      author_email='guogaishiwo@gmail.com',
       url='https://github.com/krrr/wstan',
+      license='MIT',
+      keywords='proxy tunnel websocket',
       packages=find_packages(),
       requires=['cryptography'],
       classifiers=[
           'Topic :: Internet :: Proxy Servers',
           'Intended Audience :: Developers',
+          'License :: OSI Approved :: MIT License',
           'Programming Language :: Python :: 3.3',
           'Programming Language :: Python :: 3.4',
           'Programming Language :: Python :: 3.5',
