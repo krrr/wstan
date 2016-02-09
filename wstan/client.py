@@ -123,7 +123,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 logging.info('tunnel abnormal reset: %s' % msg)
                 if self.canReturnErrorPage:
                     title, __, reason = msg.partition(':')
-                    self._writer.write(gen_error_page(title, reason))
+                    self._writer.write(gen_error_page(title, reason.strip()))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
@@ -231,16 +231,16 @@ def http_proxy_handler(dat, reader, writer):
         logging.warning('bad http proxy request')
         return writer.close()
 
-    # get complete request line
+    # get request line and header
     while True:  # the line is not likely to be that long
-        end = dat.find(b'\r\n')
-        if end != -1:
+        if b'\r\n\r\n' in dat:
             break
         r = yield from reader.read(1024)
         if not r:
             return writer.close()
         dat += r
-    req_line, rest_dat = dat[:end], dat[end:]
+    rl_end = dat.find(b'\r\n')
+    req_line, rest_dat = dat[:rl_end], dat[rl_end:]
 
     method, url, ver = req_line.split()
     if method == b'CONNECT':  # e.g. g.cn:443
