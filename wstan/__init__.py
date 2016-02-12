@@ -179,6 +179,17 @@ def can_return_error_page(dat):
 
 
 def gen_error_page(title, detail):
+    # error message for human
+    # error code reference: https://support.microsoft.com/en-us/kb/819124
+    if detail == '[Errno -2] Name or service not known':
+        detail = 'server not found'
+    elif 'getaddrinfo failed' in detail:
+        detail = 'DNS lookup failed'
+    elif (detail.startswith('[Errno 10060] Conn') or
+          detail == 'peer did not finish (in time) the opening handshake'):
+        # failed to establish TCP connection or handshake timeout, because of poor network
+        detail = ''
+
     body = _error_page.format(title=title, detail=detail).encode()
     header = '\r\n'.join(
         ['HTTP/1.1 599 WSTAN ERROR', 'Content-Type: text/html; charset=UTF-8',
