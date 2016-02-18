@@ -12,7 +12,7 @@ setup(name='wstan',
       license='MIT',
       keywords='proxy tunnel websocket',
       packages=find_packages(),
-      requires=['cryptography'],
+      install_requires=['cryptography'],
       classifiers=[
           'Topic :: Internet :: Proxy Servers',
           'Intended Audience :: Developers',
