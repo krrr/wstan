@@ -41,7 +41,7 @@ class RelayMixin(FlowControlledWSProtocol):
     # IDLE --setProxy--> USING
     TUN_STATE_IDLE, TUN_STATE_USING, TUN_STATE_RESETTING = range(3)
     BUF_SIZE = random.randrange(4096, 8192)
-    REQ_TTL = 15  # in seconds
+    REQ_TTL = 60  # in seconds
     CMD_REQ, CMD_DAT, CMD_RST = range(3)  # every ws message has this command type
     DAT_LOG_MAX_LEN = 270  # maximum length of logged data which triggered error, in bytes
     allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
@@ -83,8 +83,7 @@ class RelayMixin(FlowControlledWSProtocol):
                 t = struct.unpack('>d', dat[:TIMESTAMP_LEN])[0]
             except struct.error:
                 raise ValueError('invalid timestamp')
-            expire_time = t + self.REQ_TTL
-            if time.time() > expire_time:
+            if abs(time.time() - t) > self.REQ_TTL:
                 raise ValueError('request expired (%.1fs old), decrypted dat: %s' %
                                  (time.time() - t, dat))
 
