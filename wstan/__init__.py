@@ -183,6 +183,9 @@ def gen_error_page(title, detail):
     # error code reference: https://support.microsoft.com/en-us/kb/819124
     if detail == '[Errno -2] Name or service not known':
         detail = 'server not found'
+    elif detail == 'WebSocket connection upgrade failed (400 - None)':
+        detail = 'access denied, please check your password and make sure that ' \
+                 'system clock is synchronized'
     elif 'getaddrinfo failed' in detail:
         detail = 'DNS lookup failed'
     elif (detail.startswith('[Errno 10060] Conn') or
