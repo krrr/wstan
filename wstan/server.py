@@ -10,7 +10,8 @@ from wstan import loop, config, die, get_sha1, Base64Error
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def __init__(self):
-        super().__init__()
+        WebSocketServerProtocol.__init__(self)
+        RelayMixin.__init__(self)
         self.clientInfo = None
         self.connectTargetTask = None
 

@@ -17,7 +17,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     """Add auto-ping switch (dirty way) and let us manually start handshaking."""
     # this framework mix camel and underline naming style, nice!
     def __init__(self):
-        super().__init__()
+        WebSocketClientProtocol.__init__(self)
         self.customUriPath = '/'
         self.customWsKey = None
         self.delayedHandshake = asyncio.Future()
@@ -75,7 +75,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     pool = deque()
 
     def __init__(self):
-        super().__init__()
+        CustomWSClientProtocol.__init__(self)
+        RelayMixin.__init__(self)
         self.lastIdleTime = None
         self.checkTimeoutTask = None
         self.tunOpen = asyncio.Future()

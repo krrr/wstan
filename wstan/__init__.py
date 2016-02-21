@@ -30,6 +30,9 @@ from binascii import Error as Base64Error
 
 __version__ = '0.2.1'
 
+# Don't use "super().__init__()" in constructor of classes of this package (all libraries
+# used are using old style)
+
 # global variables shared between modules
 config = loop = None
 

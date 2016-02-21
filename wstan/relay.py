@@ -7,7 +7,6 @@ import hashlib
 import time
 import random
 from asyncio.streams import FlowControlMixin
-from wstan.autobahn.websocket.protocol import WebSocketProtocol
 from wstan import config, parse_socks_addr
 if not config.tun_ssl:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -22,18 +21,14 @@ def _get_digest(dat):
     return hmac.new(config.key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
 
 
-class FlowControlledWSProtocol(FlowControlMixin, WebSocketProtocol):
-    def __init__(self):
-        FlowControlMixin.__init__(self)
-        WebSocketProtocol.__init__(self)
-
+class OurFlowControlMixin(FlowControlMixin):
     @asyncio.coroutine
     def drain(self):
         """Wait for all queued messages to be sent."""
         yield from self._drain_helper()
 
 
-class RelayMixin(FlowControlledWSProtocol):
+class RelayMixin(OurFlowControlMixin):
     # states of relay:
     # --> IDLE (initial)
     # USING --RST-sent--> RESETTING --RST-received--> IDLE
@@ -47,7 +42,7 @@ class RelayMixin(FlowControlledWSProtocol):
     allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
 
     def __init__(self):
-        super().__init__()
+        OurFlowControlMixin.__init__(self)
         self.tunState = self.TUN_STATE_IDLE
         self._reader = None
         self._writer = None
