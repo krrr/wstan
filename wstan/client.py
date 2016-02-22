@@ -198,12 +198,13 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             except Exception as e:
                 if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
                     # sometimes reason can be None in extremely poor network
-                    reason = tun.wasNotCleanReason or ''
+                    msg = tun.wasNotCleanReason or ''
                 else:
-                    reason = str(e)
-                logging.error("can't connect to server: %s" % reason)
+                    msg = str(e)
+                msg = translate_err_msg(msg)
+                logging.error("can't connect to server: %s" % msg)
                 if canErr:
-                    writer.write(gen_error_page("can't connect to wstan server", reason))
+                    writer.write(gen_error_page("can't connect to wstan server", msg))
                 return writer.close()
         tun.canReturnErrorPage = canErr
         tun.setProxy(reader, writer)
@@ -214,6 +215,23 @@ factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.autoPingTimeout = 5
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
+
+
+def translate_err_msg(msg):
+    # Windows error code reference: https://support.microsoft.com/en-us/kb/819124
+    if msg == '[Errno -2] Name or service not known':
+        return 'server not found'
+    elif msg == 'WebSocket connection upgrade failed (400 - None)':
+        return 'access denied, please check your password and make sure that ' \
+               'system clock is synchronized'
+    elif 'getaddrinfo failed' in msg:
+        return 'DNS lookup failed'
+    elif (msg.startswith('[Errno 10060] Conn') or
+          msg == 'peer did not finish (in time) the opening handshake'):
+        # failed to establish TCP connection or handshake timeout, because of poor network
+        return 'timeout'
+    else:
+        return msg
 
 
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
