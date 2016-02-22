@@ -2848,7 +2848,7 @@ class WebSocketServerProtocol(WebSocketProtocol):
         error response and then drop the connection.
         """
         self.wasNotCleanReason = reason
-        self.log.info("failing WebSocket opening handshake ('%s')" % reason)
+        self.log.debug("failing WebSocket opening handshake ('%s')" % reason)
         self.sendHttpErrorResponse(code, reason, responseHeaders)
         self.dropConnection(abort=False)
 
@@ -3567,7 +3567,7 @@ class WebSocketClientProtocol(WebSocketProtocol):
         connection.
         """
         self.wasNotCleanReason = reason
-        self.log.info("failing WebSocket opening handshake ('%s')" % reason)
+        self.log.debug("failing WebSocket opening handshake ('%s')" % reason)
         self.dropConnection(abort=True)
 
 

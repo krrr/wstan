@@ -160,14 +160,15 @@ class RelayMixin(OurFlowControlMixin):
         else:
             self.sendClose(3001)
 
-    def onClose(self, wasClean, code, reason):
+    def onClose(self, wasClean, code, reason, logWarn=True):
         if not wasClean or code != 1000:
             if self._writer:
                 self._writer.close()
             if self._pushToTunTask:
                 self._pushToTunTask.cancel()
-            desc = ': %s' % (reason or code or 'unknown reason') if config.debug else ''
-            logging.warning('tunnel broken' + desc)
+            if logWarn:
+                desc = ': %s' % (reason or code or 'unknown reason') if config.debug else ''
+                logging.warning('tunnel broken' + desc)
         if config.debug:
             self.allConn.remove(self)
             logging.debug('tunnel closed (total %d)' % len(self.allConn))

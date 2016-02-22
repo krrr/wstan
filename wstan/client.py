@@ -136,8 +136,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         else:
             logging.error('wrong command')
 
-    def onClose(self, *args, **kwargs):
-        super().onClose(*args, **kwargs)
+    def onClose(self, *args):
+        if not self.tunOpen.done():
+            RelayMixin.onClose(self, *args, logWarn=False)
+            self.tunOpen.cancel()
+        else:
+            RelayMixin.onClose(self, *args)
         if self.inPool:
             self.pool.remove(self)
 
@@ -190,16 +194,16 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 # lower latency by sending relay header and data in ws handshake
                 tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
                 asyncio.async(tun.restartHandshake())
-                try:
-                    yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
-                except asyncio.TimeoutError:
-                    tun.dropConnection()
-                    # sometimes reason can be None in extremely poor network
-                    raise ConnectionError(tun.wasNotCleanReason or '')
+                yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
             except Exception as e:
-                logging.error("can't connect to server: %s" % e)
+                if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
+                    # sometimes reason can be None in extremely poor network
+                    reason = tun.wasNotCleanReason or ''
+                else:
+                    reason = str(e)
+                logging.error("can't connect to server: %s" % reason)
                 if canErr:
-                    writer.write(gen_error_page("can't connect to wstan server", str(e)))
+                    writer.write(gen_error_page("can't connect to wstan server", reason))
                 return writer.close()
         tun.canReturnErrorPage = canErr
         tun.setProxy(reader, writer)
