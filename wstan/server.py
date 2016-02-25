@@ -141,8 +141,6 @@ def main():
     addr = config.tun_addr or config.uri_addr
     port = config.tun_port or config.uri_port
     uri = config.uri
-    if config.tun_port and config.tun_port != config.uri_port:
-        uri = uri.replace(':%d' % config.uri_port, ':%d' % config.tun_port)
     factory = WebSocketServerFactory(uri)
     factory.protocol = WSTunServerProtocol
     factory.server = ''  # hide Server field of handshake HTTP header

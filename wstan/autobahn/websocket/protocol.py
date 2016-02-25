@@ -2447,24 +2447,7 @@ class WebSocketServerProtocol(WebSocketProtocol):
                 except ValueError:
                     return self.failHandshake("invalid port '%s' in HTTP Host header '%s'" % (str(p.strip()), str(self.http_request_host)))
 
-                # do port checking only if externalPort or URL was set
-                if self.factory.externalPort:
-                    if port != self.factory.externalPort:
-                        return self.failHandshake("port %d in HTTP Host header '%s' does not match server listening port %s" % (port, str(self.http_request_host), self.factory.externalPort))
-                else:
-                    if self.debugCodePaths:
-                        self.log.debug("skipping opening handshake port checking - neither WS URL nor external port set")
-
                 self.http_request_host = h
-
-            else:
-                # do port checking only if externalPort or URL was set
-                if self.factory.externalPort:
-                    if not ((self.factory.isSecure and self.factory.externalPort == 443) or (not self.factory.isSecure and self.factory.externalPort == 80)):
-                        return self.failHandshake("missing port in HTTP Host header '%s' and server runs on non-standard port %d (wss = %s)" % (str(self.http_request_host), self.factory.externalPort, self.factory.isSecure))
-                else:
-                    if self.debugCodePaths:
-                        self.log.debug("skipping opening handshake port checking - neither WS URL nor external port set")
 
             # Upgrade
             #
@@ -2955,7 +2938,6 @@ class WebSocketServerFactory(WebSocketFactory):
                  protocols=None,
                  server="AutobahnPython/%s" % __version__,
                  headers=None,
-                 externalPort=None,
                  debug=False,
                  debugCodePaths=False):
         """
@@ -2971,8 +2953,6 @@ class WebSocketServerFactory(WebSocketFactory):
         :type server: str
         :param headers: An optional mapping of additional HTTP headers to send during the WebSocket opening handshake.
         :type headers: dict
-        :param externalPort: Optionally, the external visible port this factory will be reachable under (i.e. when running behind a L2/L3 forwarding device).
-        :type externalPort: int
         :param debug: Debug mode (default: `False`).
         :type debug: bool
         :param debugCodePaths: Debug code paths mode (default: `False`).
@@ -2991,7 +2971,7 @@ class WebSocketServerFactory(WebSocketFactory):
 
         # default WS session parameters
         #
-        self.setSessionParameters(url, protocols, server, headers, externalPort)
+        self.setSessionParameters(url, protocols, server, headers)
 
         # default WebSocket protocol options
         #
@@ -3005,8 +2985,7 @@ class WebSocketServerFactory(WebSocketFactory):
                              url=None,
                              protocols=None,
                              server=None,
-                             headers=None,
-                             externalPort=None):
+                             headers=None):
         """
         Set WebSocket session parameters.
 
@@ -3020,8 +2999,6 @@ class WebSocketServerFactory(WebSocketFactory):
         :type server: str
         :param headers: An optional mapping of additional HTTP headers to send during the WebSocket opening handshake.
         :type headers: dict
-        :param externalPort: Optionally, the external visible port this server will be reachable under (i.e. when running behind a L2/L3 forwarding device).
-        :type externalPort: int
         """
         # parse WebSocket URI into components
         (isSecure, host, port, resource, path, params) = parseWsUrl(url or "ws://localhost")
@@ -3038,13 +3015,6 @@ class WebSocketServerFactory(WebSocketFactory):
         self.protocols = protocols or []
         self.server = server
         self.headers = headers or {}
-
-        if externalPort:
-            self.externalPort = externalPort
-        elif url:
-            self.externalPort = self.port
-        else:
-            self.externalPort = None
 
     def resetProtocolOptions(self):
         """
