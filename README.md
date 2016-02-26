@@ -1,4 +1,7 @@
 # wstan
+[![PyPI](https://img.shields.io/pypi/v/wstan.svg)](https://pypi.python.org/pypi/wstan)
+[![PyPI](https://img.shields.io/pypi/pyversions/wstan.svg)](https://pypi.python.org/pypi/wstan)
+
 Tunneling TCP connections in WebSocket to circumventing firewalls.
 It's light and can run on some PaaS (with SSL support).
 
