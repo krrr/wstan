@@ -124,7 +124,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 logging.info('tunnel abnormal reset: %s' % msg)
                 if self.canReturnErrorPage:
                     title, __, reason = msg.partition(':')
-                    self._writer.write(gen_error_page(title, reason.strip()))
+                    self._writer.write(gen_error_page(title, translate_err_msg(reason.strip())))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])

@@ -65,8 +65,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         try:
             reader, writer = yield from asyncio.open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
-            logging.info('failed to connect %s:%s (from %s)' % (addr, port, self.clientInfo))
-            return self.resetTunnel(reason='failed to connect target: %s' % e)
+            logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.clientInfo))
+            return self.resetTunnel(reason="can't connect to target: %s" % e)
         logging.info('relay %s <--> %s:%s' % (self.clientInfo, addr, port))
         self.setProxy(reader, writer)
         assert data, 'some data must be sent right after connected to target'
