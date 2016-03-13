@@ -11,7 +11,7 @@ It's light and can run on some PaaS (with SSL support).
 * Display error message in browser (plain HTTP only)
 * SOCKS v5 and HTTP(S) in the same port (HTTP proxy is slower)
 
-WARN: Do not rely it on security (encryption always enabled, but is much weaker than SSL)
+WARN: Do not rely it on security when not using SSL (encryption always enabled, but is much weaker than SSH tunnel)
 
 ## Usage
 ```
@@ -65,7 +65,12 @@ wstan wss://yours.rhcloud.com:8443 KEY -z  # client
 * websockify (not for circumventing FW)
 * [gost](https://github.com/ginuerzh/gost/)
 
-An experiment that try to make active probing against server side harder while
-still keeping low latency (of connection establishment). It's stateless
-and act as a SOCKS v5 server at localhost (like shadowsocks). TCP-fastopen
-not supported yet, but a connection pool may help you a little.
+## Details
+Goal: make active probing against server side more difficult while
+still keeping low latency of connection establishment and being stateless (inspired by shadowsocks).
+
+Tech Detail:
+* request frame has HMAC and timestamp (data frame has nothing), and all frames are encrypted using AES-128-CTR
+* when establishing a connection, request frame will be encoded into URI (to achieve low latency)
+* it assumes that a TCP client will send some data to server right after connection established, and those data will be put into request frame
+* it has a connection pool
