@@ -137,6 +137,13 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         return super().sendServerStatus(redirectUrl, redirectAfter) if redirectUrl else self.sendHtml('')
 
 
+def silent_timeout_err_handler(loop, context):
+    """Prevent asyncio from logging annoying TimeoutError."""
+    if isinstance(context['exception'], TimeoutError):
+        return
+    loop.default_exception_handler(context)
+
+
 def main():
     addr = config.tun_addr or config.uri_addr
     port = config.tun_port or config.uri_port
@@ -159,6 +166,8 @@ def main():
         so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
     print('wstan server -- listening on %s:%d' % (addr, port))
+    if not config.debug:
+        loop.set_exception_handler(silent_timeout_err_handler)
     try:
         loop.run_forever()
     except KeyboardInterrupt:
