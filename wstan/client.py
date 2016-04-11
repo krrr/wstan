@@ -220,13 +220,14 @@ factory.openHandshakeTimeout = 8  # timeout after TCP established and before suc
 def translate_err_msg(msg):
     # Windows error code reference: https://support.microsoft.com/en-us/kb/819124
     if msg == '[Errno -2] Name or service not known':
-        return 'host not found'
+        return 'server not found'
     elif msg == 'WebSocket connection upgrade failed (400 - None)':
         return 'forbidden (maybe key is wrong or system clock is out of sync)'
     elif 'getaddrinfo failed' in msg:
         return 'DNS lookup failed'
     elif (msg.startswith('[Errno 10060] Conn') or
-          msg == 'peer did not finish (in time) the opening handshake'):
+          msg == 'peer did not finish (in time) the opening handshake' or
+          msg.startswith('[Errno 110] Connect call failed')):
         # failed to establish TCP connection or handshake timeout, because of poor network
         return 'connection timed out'
     elif msg.startswith('[Errno 10061] Conn'):
