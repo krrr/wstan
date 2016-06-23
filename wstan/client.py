@@ -69,9 +69,10 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
-    TUN_MAX_IDLE_TIMEOUT = 35  # close tunnel in pool on timeout (in seconds)
+    POOL_NOM_SIZE = round(POOL_MAX_SIZE / 2)
+    TUN_MAX_IDLE_TIMEOUT = 35  # close tunnels in pool on timeout (in seconds)
+    TUN_MIN_IDLE_TIMEOUT = round(TUN_MAX_IDLE_TIMEOUT / 2)  # used when len(pool) > POOL_NOM_SIZE
     TUN_PING_INTERVAL = 8  # only tunnels in pool do auto-ping
-    POOL_NOM_SIZE, TUN_MIN_IDLE_TIMEOUT = round(POOL_MAX_SIZE / 2), round(TUN_MAX_IDLE_TIMEOUT / 2)
     pool = deque()
 
     def __init__(self):
@@ -85,9 +86,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
-        self.customWsKey = base64.b64encode(nonce)  # nonce used to encrypt in B64
+        self.customWsKey = base64.b64encode(nonce)  # nonce used to encrypt in base64
 
-    if TUN_MAX_IDLE_TIMEOUT <= 0:
+    if TUN_MAX_IDLE_TIMEOUT <= 0 or POOL_MAX_SIZE <= 0:
         def resetTunnel(self, reason=''):
             self.sendClose(1000)
 
@@ -142,8 +143,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.tunOpen.cancel()
         else:
             RelayMixin.onClose(self, *args)
+        self.tryRemoveFromPool()
+
+    def tryRemoveFromPool(self):
         if self.inPool:
             self.pool.remove(self)
+            self.inPool = False
 
     @classmethod
     @asyncio.coroutine
@@ -154,6 +159,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             yield from asyncio.sleep(timeout)
             if (tun.tunState == cls.TUN_STATE_IDLE and
                (time.time() - tun.lastIdleTime) > timeout):
+                tun.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
                 tun.sendClose(1000)
 
     @classmethod
@@ -175,10 +181,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
         if cls.pool:
             logging.debug('reuse tunnel from pool (total %s)' % len(cls.pool))
-            tun = cls.pool.popleft()
+            tun = cls.pool[0]
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
-            tun.inPool = False
+            tun.tryRemoveFromPool()
             tun.disableAutoPing()
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:

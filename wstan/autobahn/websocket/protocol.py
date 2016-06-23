@@ -1050,7 +1050,8 @@ class WebSocketProtocol(object):
         """
         # cancel any server connection drop timer if present
         #
-        self.log.debug('_connectionLost: %s' % reason)
+        if reason is not None:
+            self.log.debug('_connectionLost: %s' % reason)
         if not self.factory.isServer and self.serverConnectionDropTimeoutCall is not None:
             if self.debugCodePaths:
                 self.log.debug("serverConnectionDropTimeoutCall.cancel")
