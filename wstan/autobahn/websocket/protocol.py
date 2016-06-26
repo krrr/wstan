@@ -45,7 +45,6 @@ from wstan.autobahn.websocket.types import ConnectionRequest, ConnectionResponse
 from wstan.autobahn.util import Stopwatch, newid, wildcards2patterns
 from wstan.autobahn.websocket.utf8validator import Utf8Validator
 from wstan.autobahn.websocket.xormasker import XorMaskerNull, createXorMasker
-from wstan.autobahn.websocket.compress import PERMESSAGE_COMPRESSION_EXTENSION
 
 import urllib
 import asyncio
@@ -266,11 +265,19 @@ def parseHttpHeader(data):
     FOR INTERNAL USE ONLY!
 
     :param data: The HTTP header data up to the \n\n line.
-    :type data: str
+    :type data: bytes
 
     :returns: tuple -- Tuple of HTTP status line, headers and headers count.
     """
-    raw = data.decode('utf8').splitlines()
+    # By default, message header field parameters in Hypertext Transfer
+    # Protocol (HTTP) messages cannot carry characters outside the ISO-
+    # 8859-1 character set.
+    #
+    # See:
+    #   - http://tools.ietf.org/html/rfc5987
+    #   - https://github.com/crossbario/autobahn-python/issues/533
+    #
+    raw = data.decode('iso-8859-1').splitlines()
     http_status_line = raw[0].strip()
     http_headers = {}
     http_headers_cnt = {}
@@ -279,8 +286,6 @@ def parseHttpHeader(data):
         if i > 0:
             # HTTP header keys are case-insensitive
             key = h[:i].strip().lower()
-
-            # not sure if UTF-8 is allowed for HTTP header values..
             value = h[i + 1:].strip()
 
             # handle HTTP headers split across multiple lines
@@ -2128,26 +2133,10 @@ class WebSocketProtocol(object):
 
         self.trafficStats.outgoingWebSocketMessages += 1
 
-        # setup compressor
-        #
-        if self._perMessageCompress is not None and not doNotCompress:
-            sendCompressed = True
-
-            self._perMessageCompress.startCompressMessage()
-
-            self.trafficStats.outgoingOctetsAppLevel += len(payload)
-
-            payload1 = self._perMessageCompress.compressMessageData(payload)
-            payload2 = self._perMessageCompress.endCompressMessage()
-            payload = b''.join([payload1, payload2])
-
-            self.trafficStats.outgoingOctetsWebSocketLevel += len(payload)
-
-        else:
-            sendCompressed = False
-            l = len(payload)
-            self.trafficStats.outgoingOctetsAppLevel += l
-            self.trafficStats.outgoingOctetsWebSocketLevel += l
+        sendCompressed = False
+        l = len(payload)
+        self.trafficStats.outgoingOctetsAppLevel += l
+        self.trafficStats.outgoingOctetsWebSocketLevel += l
 
         # explicit fragmentSize arguments overrides autoFragmentSize setting
         #
@@ -2389,7 +2378,11 @@ class WebSocketServerProtocol(WebSocketProtocol):
 
             # extract HTTP status line and headers
             #
-            (self.http_status_line, self.http_headers, http_headers_cnt) = parseHttpHeader(self.http_request_data)
+            try:
+                (self.http_status_line, self.http_headers, http_headers_cnt) = \
+                    parseHttpHeader(self.http_request_data)
+            except Exception as e:
+                self.log.warning("can't parse HTTP header: %s" % e)
 
             # validate WebSocket opening handshake client request
             #
@@ -2690,45 +2683,10 @@ class WebSocketServerProtocol(WebSocketProtocol):
 
         extensionResponse = []
 
-        # gets filled with permessage-compress offers from the client
-        #
-        pmceOffers = []
-
         # handle WebSocket extensions
         #
         for (extension, params) in self.websocket_extensions:
-
-            if self.debug:
-                self.log.debug("parsed WebSocket extension '%s' with params '%s'" % (extension, params))
-
-            # process permessage-compress extension
-            #
-            if extension in PERMESSAGE_COMPRESSION_EXTENSION:
-
-                PMCE = PERMESSAGE_COMPRESSION_EXTENSION[extension]
-
-                try:
-                    offer = PMCE['Offer'].parse(params)
-                    pmceOffers.append(offer)
-                except Exception as e:
-                    return self.failHandshake(str(e))
-
-            else:
-                if self.debug:
-                    self.log.debug("client requested '%s' extension we don't support or which is not activated" % extension)
-
-        # handle permessage-compress offers by the client
-        #
-        if len(pmceOffers) > 0:
-            accept = self.perMessageCompressionAccept(pmceOffers)
-            if accept is not None:
-                PMCE = PERMESSAGE_COMPRESSION_EXTENSION[accept.EXTENSION_NAME]
-                self._perMessageCompress = PMCE['PMCE'].createFromOfferAccept(self.factory.isServer, accept)
-                self.websocket_extensions_in_use.append(self._perMessageCompress)
-                extensionResponse.append(accept.getExtensionString())
-            else:
-                if self.debug:
-                    self.log.debug("client request permessage-compress extension, but we did not accept any offer [%s]" % pmceOffers)
+            self.log.warning("client requested '%s' extension we don't support or which is not activated" % extension)
 
         # build response to complete WebSocket handshake
         #
@@ -3429,37 +3387,7 @@ class WebSocketClientProtocol(WebSocketProtocol):
                 # process extensions selected by server
                 #
                 for (extension, params) in websocket_extensions:
-
-                    if self.debug:
-                        self.log.debug("parsed WebSocket extension '%s' with params '%s'" % (extension, params))
-
-                    # process permessage-compress extension
-                    #
-                    if extension in PERMESSAGE_COMPRESSION_EXTENSION:
-
-                        # check that server only responded with 1 configuration ("PMCE")
-                        #
-                        if self._perMessageCompress is not None:
-                            return self.failHandshake("multiple occurrence of a permessage-compress extension")
-
-                        PMCE = PERMESSAGE_COMPRESSION_EXTENSION[extension]
-
-                        try:
-                            pmceResponse = PMCE['Response'].parse(params)
-                        except Exception as e:
-                            return self.failHandshake(str(e))
-
-                        accept = self.perMessageCompressionAccept(pmceResponse)
-
-                        if accept is None:
-                            return self.failHandshake("WebSocket permessage-compress extension response from server denied by client")
-
-                        self._perMessageCompress = PMCE['PMCE'].createFromResponseAccept(self.factory.isServer, accept)
-
-                        self.websocket_extensions_in_use.append(self._perMessageCompress)
-
-                    else:
-                        return self.failHandshake("server wants to use extension '%s' we did not request, haven't implemented or did not enable" % extension)
+                    return self.failHandshake("server wants to use extension '%s' we did not request, haven't implemented or did not enable" % extension)
 
             # handle "subprotocol in use" - if any
             #
