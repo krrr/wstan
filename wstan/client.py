@@ -90,9 +90,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     if TUN_MAX_IDLE_TIMEOUT <= 0 or POOL_MAX_SIZE <= 0:
         def resetTunnel(self, reason=''):
+            # skip sending reset command, close directly instead
+            self.tunState = self.TUN_STATE_RESETTING
             self.sendClose(1000)
 
         def onResetTunnel(self):
+            self.tunState = self.TUN_STATE_IDLE
             self.sendClose(1000)
 
     def succeedReset(self):
@@ -129,8 +132,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
-            if self.tunState != self.TUN_STATE_USING:
-                # why this happens?
+            if self.tunState == self.TUN_STATE_RESETTING:
+                # Reset command sent, but server will keep sending data before
+                # receiving the command.
+                # Can't just throw away dat, because decryptor need to be updated
                 return
             self.canReturnErrorPage = False
             self._writer.write(dat)
