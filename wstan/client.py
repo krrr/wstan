@@ -20,7 +20,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         WebSocketClientProtocol.__init__(self)
         self.customUriPath = '/'
         self.customWsKey = None
-        self.delayedHandshake = asyncio.Future()
+        self._delayedHandshake = asyncio.Future()
 
     def enableAutoPing(self, interval):
         self.autoPingInterval = interval
@@ -35,12 +35,12 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def startHandshake(self):
         """Delay handshake because some states must be set right before handshake (so
         they can't be set in factory)."""
-        self.delayedHandshake.set_result(None)
+        self._delayedHandshake.set_result(None)
 
     @asyncio.coroutine
     def restartHandshake(self):
         """Resume delayed handshake. It enable us to customize handshake HTTP header."""
-        yield from asyncio.wait_for(self.delayedHandshake, None)
+        yield from asyncio.wait_for(self._delayedHandshake, None)
         if config.compatible:
             self.websocket_key = base64.b64encode(os.urandom(16))
         else:
@@ -48,20 +48,19 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         request = [
             'GET %s HTTP/1.1' % self.customUriPath,
             'Host: %s:%d' % (self.factory.host, self.factory.port),
-            'User-Agent: wwww',
             'Sec-WebSocket-Key: %s' % self.websocket_key.decode(),
             'Sec-WebSocket-Version: %d' % self.SPEC_TO_PROTOCOL_VERSION[self.version],
             'Pragma: no-cache',
             'Cache-Control: no-cache',
             'Connection: Upgrade',
             'Upgrade: WebSocket',
-            '',
-            ''  # ends with \r\n\r\n
         ]
         if config.compatible:
             # store custom ws key in cookie to prevent it from being changed by ws proxy
-            request.insert(2, 'Cookie: %s=%s' % (config.cookie_key, self.customWsKey.decode()))
-        self.http_request_data = '\r\n'.join(request).encode('utf8')
+            request.append('Cookie: %s=%s' % (config.cookie_key, self.customWsKey.decode()))
+        if self.factory.useragent:
+            request.append('User-Agent: %s' % self.factory.useragent)
+        self.http_request_data = '\r\n'.join(request).encode('utf8') + b'\r\n\r\n'
         self.sendData(self.http_request_data)
         if self.debug:
             self.log.debug(request)
@@ -225,7 +224,7 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.autoPingTimeout = 5
-factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
+factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
 
 
 def translate_err_msg(msg):
