@@ -131,7 +131,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
-            if self.tunState == self.TUN_STATE_RESETTING:
+            if self.tunState != self.TUN_STATE_USING:
                 # Reset command sent, but server will keep sending data before
                 # receiving the command.
                 # Can't just throw away dat, because decryptor need to be updated
