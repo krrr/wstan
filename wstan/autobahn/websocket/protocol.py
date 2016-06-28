@@ -831,6 +831,8 @@ class WebSocketProtocol(object):
         if self.debugCodePaths:
             self.log.debug("Auto ping/pong: onAutoPingTimeout fired")
 
+        self.wasClean = False
+        self.wasNotCleanReason = "auto-ping timed out"
         self.autoPingTimeoutCall = None
         self.dropConnection(abort=True)
 
@@ -1089,8 +1091,8 @@ class WebSocketProtocol(object):
         else:
             if not self.wasClean:
                 if not self.droppedByMe and self.wasNotCleanReason is None:
-                    self.wasNotCleanReason = "peer dropped the TCP connection without previous WebSocket closing handshake"
-                self._onClose(self.wasClean, WebSocketProtocol.CLOSE_STATUS_CODE_ABNORMAL_CLOSE, "connection was closed uncleanly (%s)" % self.wasNotCleanReason)
+                    self.wasNotCleanReason = "connection dropped without closing handshake"
+                self._onClose(self.wasClean, WebSocketProtocol.CLOSE_STATUS_CODE_ABNORMAL_CLOSE, self.wasNotCleanReason)
             else:
                 self._onClose(self.wasClean, self.remoteCloseCode, self.remoteCloseReason)
 
@@ -3063,9 +3065,9 @@ class WebSocketServerFactory(WebSocketFactory):
         :type failbyDrop: bool or None
         :param echoCloseCodeReason: Iff true, when receiving a close, echo back close code/reason. Otherwise reply with `code == 1000, reason = ""` (default: `False`).
         :type echoCloseCodeReason: bool or None
-        :param openHandshakeTimeout: Opening WebSocket handshake timeout, timeout in seconds or `0` to deactivate (default: `0`).
+        :param openHandshakeTimeout: Opening WebSocket handshake timeout, timeout in seconds or `0` to deactivate (default: `5`).
         :type openHandshakeTimeout: float or None
-        :param closeHandshakeTimeout: When we expect to receive a closing handshake reply, timeout in seconds (default: `1`).
+        :param closeHandshakeTimeout: When we expect to receive a closing handshake reply, timeout in seconds (default: `5`).
         :type closeHandshakeTimeout: float or None
         :param tcpNoDelay: TCP NODELAY ("Nagle") socket option (default: `True`).
         :type tcpNoDelay: bool or None
@@ -3589,7 +3591,7 @@ class WebSocketClientFactory(WebSocketFactory):
         self.echoCloseCodeReason = False
         self.serverConnectionDropTimeout = 1
         self.openHandshakeTimeout = 5
-        self.closeHandshakeTimeout = 1
+        self.closeHandshakeTimeout = 5
         self.tcpNoDelay = True
 
         # permessage-XXX extensions
