@@ -240,7 +240,7 @@ def translate_err_msg(msg):
           msg.startswith('[Errno 110] Connect call failed')):
         # failed to establish TCP connection or handshake timeout, because of poor network
         return 'connection timed out'
-    elif msg.startswith('[Errno 10061] Conn'):
+    elif msg.startswith('[Errno 10061] Conn') or msg.startswith('[Errno 111] Connect call failed'):
         return 'connection refused'
     else:
         return msg
