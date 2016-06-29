@@ -22,12 +22,14 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         self.customWsKey = None
         self._delayedHandshake = asyncio.Future()
 
-    def enableAutoPing(self, interval):
+    def setAutoPing(self, interval, timeout):
+        """Set auto-ping interval. Start it if it's not running."""
+        self.disableAutoPing()
         self.autoPingInterval = interval
+        self.autoPingTimeout = timeout
         self.autoPingPendingCall = loop.call_later(interval, self._sendAutoPing)
 
     def disableAutoPing(self):
-        self.autoPingInterval = 0
         if self.autoPingPendingCall:
             self.autoPingPendingCall.cancel()
             self.autoPingPendingCall = None
@@ -69,9 +71,14 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     POOL_NOM_SIZE = round(POOL_MAX_SIZE / 2)
-    TUN_MAX_IDLE_TIMEOUT = 35  # close tunnels in pool on timeout (in seconds)
+    TUN_MAX_IDLE_TIMEOUT = 60  # close tunnels in pool on timeout (in seconds)
     TUN_MIN_IDLE_TIMEOUT = round(TUN_MAX_IDLE_TIMEOUT / 2)  # used when len(pool) > POOL_NOM_SIZE
-    TUN_PING_INTERVAL = 8  # only tunnels in pool do auto-ping
+    # Tunnels in-use also need auto-ping. If another end dead when resetting,
+    # then those zombie connections will never close?
+    TUN_AUTO_PING_INTERVAL = 400
+    TUN_AUTO_PING_TIMEOUT = 30
+    POOL_AUTO_PING_INTERVAL = 10  # in-pool connection fail faster
+    POOL_AUTO_PING_TIMEOUT = 6
     pool = deque()
 
     def __init__(self):
@@ -105,6 +112,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     def onOpen(self):
         self.tunOpen.set_result(None)
         self.lastIdleTime = time.time()
+        self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
             self.customUriPath = None  # save memory
         if not config.tun_ssl:
@@ -175,7 +183,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             assert not tun.checkTimeoutTask
             tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
             tun.inPool = True
-            tun.enableAutoPing(cls.TUN_PING_INTERVAL)
+            tun.setAutoPing(cls.POOL_AUTO_PING_INTERVAL, cls.POOL_AUTO_PING_TIMEOUT)
             cls.pool.append(tun)
 
     @classmethod
@@ -189,7 +197,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
             tun.tryRemoveFromPool()
-            tun.disableAutoPing()
+            tun.setAutoPing(cls.TUN_AUTO_PING_INTERVAL, cls.TUN_AUTO_PING_TIMEOUT)
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
             try:
@@ -223,7 +231,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
-factory.autoPingTimeout = 5
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
 
 
