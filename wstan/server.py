@@ -151,8 +151,8 @@ def main():
     factory = WebSocketServerFactory(uri)
     factory.protocol = WSTunServerProtocol
     factory.server = ''  # hide Server field of handshake HTTP header
-    factory.autoPingInterval = 75
-    factory.autoPingTimeout = 10
+    factory.autoPingInterval = 400  # only used to clear half-open connections
+    factory.autoPingTimeout = 30
     factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
 
     try:
