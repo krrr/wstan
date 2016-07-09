@@ -4,12 +4,15 @@ import time
 import os
 import base64
 from collections import deque
+from urllib import parse as urlparse
+from wstan.autobahn.util import makeHttpResp
 from wstan.autobahn.websocket.protocol import parseHttpHeader
 from wstan.autobahn.asyncio import create_sock
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
-                   gen_error_page, get_sha1, make_socks_addr, http_die_soon, is_http_req)
+                   gen_error_page, get_sha1, make_socks_addr, http_die_soon, is_http_req,
+                   InMemoryLogHandler)
 
 
 # noinspection PyAttributeOutsideInit
@@ -260,7 +263,18 @@ def dispatch_proxy(reader, writer):
     dat = yield from reader.read(2048)
     if not dat:
         return writer.close()
-    handler = socks5_tcp_handler if dat[0] == 0x05 else http_proxy_handler
+
+    if dat[0] == 0x04:
+        logging.warning('unsupported SOCKS v4 request')
+        return writer.close()
+    elif dat[0] == 0x05:
+        handler = socks5_tcp_handler
+    elif is_http_req(dat):
+        handler = http_proxy_handler
+    else:
+        logging.warning('unknown request')
+        return writer.close()
+
     try:
         yield from handler(dat, reader, writer)
     except ConnectionError:
@@ -269,10 +283,6 @@ def dispatch_proxy(reader, writer):
 
 @asyncio.coroutine
 def http_proxy_handler(dat, reader, writer):
-    if not is_http_req(dat):
-        logging.warning('bad http proxy request')
-        return writer.close()
-
     # get request line and header
     while True:  # the line is not likely to be that long
         if b'\r\n\r\n' in dat:
@@ -286,16 +296,16 @@ def http_proxy_handler(dat, reader, writer):
 
     method, url, ver = req_line.split()
     if method == b'CONNECT':  # e.g. g.cn:443
-        host, port = url.decode().split(':')
+        host, port = url.split(b':')
         port = int(port)
-    else:  # e.g. http://g.cn/aa
-        url = url[7:]
-        i = url.find(b'/')
-        path = url[i:]
-        host, *port = url[:i].split(b':')
-        port = int(port[0]) if port else 80
-        host = host.decode()
-    logging.info('requesting %s:%d' % (host, port))
+    elif url.startswith(b'http'):  # e.g. http://g.cn/aa
+        parsed = urlparse.urlparse(url)
+        path, host, port = parsed.path, parsed.hostname, parsed.port or 80
+    else:
+        txt = 'wstan log (latest 200, descending):\n\n' + '\n'.join(reversed(InMemoryLogHandler.logs))
+        writer.write(makeHttpResp(txt, type_='text/plain'))
+        return writer.close()
+    logging.info('requesting %s:%d' % (host.decode(), port))
     addr_header = make_socks_addr(host, port) 
 
     if method == b'CONNECT':

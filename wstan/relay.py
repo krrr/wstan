@@ -166,8 +166,7 @@ class RelayMixin(OurFlowControlMixin):
         if self._pushToTunTask:
             self._pushToTunTask.cancel()
         if logWarn and not wasClean or code != 1000:
-            desc = ': %s' % (reason or code or 'unknown reason') if config.debug else ''
-            logging.warning('tunnel broken' + desc)
+            logging.warning('tunnel broken: %s' % (reason or code or 'unknown reason'))
         if config.debug:
             self.allConn.remove(self)
             logging.debug('tunnel closed (total %d)' % len(self.allConn))

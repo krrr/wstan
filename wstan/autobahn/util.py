@@ -181,3 +181,11 @@ def wildcards2patterns(wildcards):
     :rtype: list of obj
     """
     return [re.compile(wc.replace('.', '\.').replace('*', '.*')) for wc in wildcards]
+
+
+def makeHttpResp(html, type_='text/html'):
+    body = html.encode('utf8')
+    header = ["HTTP/1.1 200 OK",
+              "Content-Type: %s; charset=UTF-8" % type_,
+              "Content-Length: %d" % len(body)]
+    return "\r\n".join(header).encode("utf-8") + b"\r\n\r\n" + body

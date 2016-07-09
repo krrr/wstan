@@ -42,7 +42,7 @@ from wstan.autobahn import __version__
 
 from wstan.autobahn.websocket.types import ConnectionRequest, ConnectionResponse
 
-from wstan.autobahn.util import Stopwatch, newid, wildcards2patterns
+from wstan.autobahn.util import Stopwatch, newid, wildcards2patterns, makeHttpResp
 from wstan.autobahn.websocket.utf8validator import Utf8Validator
 from wstan.autobahn.websocket.xormasker import XorMaskerNull, createXorMasker
 
@@ -2811,15 +2811,7 @@ class WebSocketServerProtocol(WebSocketProtocol):
         """
         Send HTML page HTTP response.
         """
-        responseBody = html.encode('utf8')
-        response = "HTTP/1.1 200 OK\x0d\x0a"
-        if self.factory.server is not None and self.factory.server != "":
-            response += "Server: %s\x0d\x0a" % self.factory.server
-        response += "Content-Type: text/html; charset=UTF-8\x0d\x0a"
-        response += "Content-Length: %d\x0d\x0a" % len(responseBody)
-        response += "\x0d\x0a"
-        self.sendData(response.encode('utf8'))
-        self.sendData(responseBody)
+        self.sendData(makeHttpResp(html))
 
     def sendRedirect(self, url):
         """

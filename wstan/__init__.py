@@ -27,6 +27,7 @@ import sys
 import os
 import re
 from binascii import Error as Base64Error
+from collections import deque
 
 __version__ = '0.2.1'
 
@@ -75,7 +76,7 @@ _error_page = '''<!DOCTYPE html>
 
 
 def make_socks_addr(host, port):
-    return b'\x00\x03' + bytes([len(host)]) + host.encode('ascii') + struct.pack('>H', port)
+    return b'\x00\x03' + bytes([len(host)]) + host + struct.pack('>H', port)
 
 
 def parse_socks_addr(dat, allow_remain=False):
@@ -195,19 +196,32 @@ def get_sha1(dat):
     return sha1.digest()
 
 
+class InMemoryLogHandler(logging.Handler):
+    logs = deque(maxlen=200)
+
+    def emit(self, record):
+        self.logs.append(self.format(record))
+
+
 def main_entry():
     if not sys.version_info >= (3, 3, 0):
         die('Python 3.3 or higher required')
 
     global config, loop
     config = load_config()
+    
+    if config.gen_key:
+        return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())
+
     loop = asyncio.get_event_loop()
     logging.basicConfig(level=logging.DEBUG if config.debug else logging.INFO,
                         format='%(asctime)s %(levelname).1s: %(message)s',
                         datefmt='%m-%d %H:%M:%S')
-
-    if config.gen_key:
-        return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())
+    if config.client:
+        h = InMemoryLogHandler()
+        logging.getLogger().addHandler(h)
+        h.setFormatter(logging.Formatter('%(asctime)s %(levelname).1s: %(message)s', '%H:%M:%S'))
+        h.setLevel(logging.INFO)
 
     if config.server:
         from wstan.server import main
