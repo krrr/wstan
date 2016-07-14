@@ -31,6 +31,9 @@ from collections import deque
 
 __version__ = '0.2.1'
 
+# patch asyncio because "async" will become a keyword sooner or later
+asyncio.async_ = getattr(asyncio, 'ensure_future', 'async')
+
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries
 # used are using old style)
 

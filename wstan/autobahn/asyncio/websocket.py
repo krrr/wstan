@@ -109,57 +109,57 @@ class WebSocketAdapterProtocol(asyncio.Protocol):
     def _onOpen(self):
         res = self.onOpen()
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageBegin(self, isBinary):
         res = self.onMessageBegin(isBinary)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageFrameBegin(self, length):
         res = self.onMessageFrameBegin(length)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageFrameData(self, payload):
         res = self.onMessageFrameData(payload)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageFrameEnd(self):
         res = self.onMessageFrameEnd()
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageFrame(self, payload):
         res = self.onMessageFrame(payload)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessageEnd(self):
         res = self.onMessageEnd()
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onMessage(self, payload, isBinary):
         res = self.onMessage(payload, isBinary)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onPing(self, payload):
         res = self.onPing(payload)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onPong(self, payload):
         res = self.onPong(payload)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def _onClose(self, wasClean, code, reason):
         res = self.onClose(wasClean, code, reason)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
     def registerProducer(self, producer, streaming):
         raise Exception("not implemented")
@@ -195,7 +195,7 @@ class WebSocketClientProtocol(WebSocketAdapterProtocol, protocol.WebSocketClient
     def _onConnect(self, response):
         res = self.onConnect(response)
         if yields(res):
-            asyncio.async(res)
+            asyncio.async_(res)
 
 
 class WebSocketAdapterFactory(object):

@@ -105,7 +105,7 @@ class RelayMixin(OurFlowControlMixin):
     def setProxy(self, reader, writer):
         self.tunState = self.TUN_STATE_USING
         self._reader, self._writer = reader, writer
-        self._pushToTunTask = asyncio.async(self._pushToTunnelLoop())
+        self._pushToTunTask = asyncio.async_(self._pushToTunnelLoop())
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""

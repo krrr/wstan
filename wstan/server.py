@@ -58,7 +58,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 encNonce = get_sha1(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")[:16]
             self.initCipher(encNonce, encryptor=True)
 
-        self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
+        self.connectTargetTask = asyncio.async_(self.connectTarget(addr, port, remainData))
 
     @asyncio.coroutine
     def connectTarget(self, addr, port, data):
@@ -120,7 +120,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 logging.debug('relay request received when connectTargetTask running')
                 # will order of messages be changed by waiting?
                 yield from asyncio.wait_for(self.connectTargetTask, None)
-            self.connectTargetTask = asyncio.async(self.connectTarget(addr, port, remainData))
+            self.connectTargetTask = asyncio.async_(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState == self.TUN_STATE_RESETTING:

@@ -184,7 +184,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.sendClose(1000)
         else:
             assert not tun.checkTimeoutTask
-            tun.checkTimeoutTask = asyncio.async(cls._checkTimeout(tun))
+            tun.checkTimeoutTask = asyncio.async_(cls._checkTimeout(tun))
             tun.inPool = True
             tun.setAutoPing(cls.POOL_AUTO_PING_INTERVAL, cls.POOL_AUTO_PING_TIMEOUT)
             cls.pool.append(tun)
@@ -214,7 +214,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                     sock=sock, ssl=config.tun_ssl))[1]
                 # lower latency by sending relay header and data in ws handshake
                 tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
-                asyncio.async(tun.restartHandshake())
+                asyncio.async_(tun.restartHandshake())
                 yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
             except Exception as e:
                 if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
