@@ -3,6 +3,7 @@ import logging
 import time
 import os
 import base64
+from asyncio import coroutine, async_, wait_for, Future, sleep
 from collections import deque
 from urllib import parse as urlparse
 from wstan.autobahn.util import makeHttpResp
@@ -23,7 +24,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         WebSocketClientProtocol.__init__(self)
         self.customUriPath = '/'
         self.customWsKey = None
-        self._delayedHandshake = asyncio.Future()
+        self._delayedHandshake = Future()
 
     def setAutoPing(self, interval, timeout):
         """Set auto-ping interval. Start it if it's not running."""
@@ -42,10 +43,10 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         they can't be set in factory)."""
         self._delayedHandshake.set_result(None)
 
-    @asyncio.coroutine
+    @coroutine
     def restartHandshake(self):
         """Resume delayed handshake. It enable us to customize handshake HTTP header."""
-        yield from asyncio.wait_for(self._delayedHandshake, None)
+        yield from wait_for(self._delayedHandshake, None)
         if config.compatible:
             self.websocket_key = base64.b64encode(os.urandom(16))
         else:
@@ -89,7 +90,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         RelayMixin.__init__(self)
         self.lastIdleTime = None
         self.checkTimeoutTask = None
-        self.tunOpen = asyncio.Future()
+        self.tunOpen = Future()
         self.inPool = False
         self.canReturnErrorPage = False
         nonce = os.urandom(16)
@@ -110,7 +111,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     def succeedReset(self):
         super().succeedReset()
         self.lastIdleTime = time.time()
-        WSTunClientProtocol.addToPool(self)
+        self.addToPool()
 
     def onOpen(self):
         self.tunOpen.set_result(None)
@@ -160,37 +161,35 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             RelayMixin.onClose(self, *args)
         self.tryRemoveFromPool()
 
+    @coroutine
+    def _checkTimeout(self):
+        while self.state == self.STATE_OPEN:
+            timeout = (self.TUN_MAX_IDLE_TIMEOUT if len(self.pool) <= self.POOL_NOM_SIZE else
+                       self.TUN_MIN_IDLE_TIMEOUT)
+            yield from sleep(timeout)
+            if (self.tunState == self.TUN_STATE_IDLE and
+               (time.time() - self.lastIdleTime) > timeout):
+                self.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
+                self.sendClose(1000)
+
     def tryRemoveFromPool(self):
         if self.inPool:
             self.pool.remove(self)
             self.inPool = False
 
-    @classmethod
-    @asyncio.coroutine
-    def _checkTimeout(cls, tun):
-        while tun.state == cls.STATE_OPEN:
-            timeout = (cls.TUN_MAX_IDLE_TIMEOUT if len(cls.pool) <= cls.POOL_NOM_SIZE else
-                       cls.TUN_MIN_IDLE_TIMEOUT)
-            yield from asyncio.sleep(timeout)
-            if (tun.tunState == cls.TUN_STATE_IDLE and
-               (time.time() - tun.lastIdleTime) > timeout):
-                tun.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
-                tun.sendClose(1000)
-
-    @classmethod
-    def addToPool(cls, tun):
-        assert tun.tunState == cls.TUN_STATE_IDLE
-        if len(cls.pool) >= cls.POOL_MAX_SIZE:
-            tun.sendClose(1000)
+    def addToPool(self):
+        assert self.tunState == self.TUN_STATE_IDLE
+        if len(self.pool) >= self.POOL_MAX_SIZE:
+            self.sendClose(1000)
         else:
-            assert not tun.checkTimeoutTask
-            tun.checkTimeoutTask = asyncio.async_(cls._checkTimeout(tun))
-            tun.inPool = True
-            tun.setAutoPing(cls.POOL_AUTO_PING_INTERVAL, cls.POOL_AUTO_PING_TIMEOUT)
-            cls.pool.append(tun)
+            assert not self.checkTimeoutTask
+            self.checkTimeoutTask = async_(self._checkTimeout())
+            self.inPool = True
+            self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
+            self.pool.append(self)
 
     @classmethod
-    @asyncio.coroutine
+    @coroutine
     def startProxy(cls, addrHeader, dat, reader, writer):
         canErr = can_return_error_page(dat)
 
@@ -214,8 +213,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                     sock=sock, ssl=config.tun_ssl))[1]
                 # lower latency by sending relay header and data in ws handshake
                 tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
-                asyncio.async_(tun.restartHandshake())
-                yield from asyncio.wait_for(tun.tunOpen, tun.openHandshakeTimeout)
+                async_(tun.restartHandshake())
+                yield from wait_for(tun.tunOpen, tun.openHandshakeTimeout)
             except Exception as e:
                 if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
                     # sometimes reason can be None in extremely poor network
@@ -258,7 +257,7 @@ def translate_err_msg(msg):
 
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
-@asyncio.coroutine
+@coroutine
 def dispatch_proxy(reader, writer):
     dat = yield from reader.read(2048)
     if not dat:
@@ -281,7 +280,7 @@ def dispatch_proxy(reader, writer):
         writer.close()
 
 
-@asyncio.coroutine
+@coroutine
 def http_proxy_handler(dat, reader, writer):
     # get request line and header
     while True:  # the line is not likely to be that long
@@ -320,7 +319,7 @@ def http_proxy_handler(dat, reader, writer):
     yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
 
 
-@asyncio.coroutine
+@coroutine
 def socks5_tcp_handler(dat, reader, writer):
     # handle auth method selection
     if len(dat) < 2 or len(dat) != dat[1] + 2:
@@ -352,7 +351,7 @@ def socks5_tcp_handler(dat, reader, writer):
     yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
 
 
-@asyncio.coroutine
+@coroutine
 def setup_http_tunnel():
     sock = yield from create_sock(config.proxy_host, config.proxy_port)
     pair = '%s:%d' % (config.uri_addr, config.uri_port)
