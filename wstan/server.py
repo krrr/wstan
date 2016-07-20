@@ -1,11 +1,19 @@
-import asyncio
 import logging
 import socket
 import base64
+import time
+from collections import defaultdict
+from asyncio import coroutine, async_, open_connection, wait_for, sleep
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
 from wstan import loop, config, die, get_sha1, Base64Error
+
+
+# key is timestamp, value is list of nonce saved at timestamp ~ (timestamp+10)
+# last digit of timestamp is always 0
+# used to detect replay attack, but will fail when genuine request being delayed
+seenNonceByTime = defaultdict(set)
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
@@ -16,6 +24,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         self.connectTargetTask = None
 
     def onConnect(self, request):
+        # ----- init decryptor -----
         if not config.tun_ssl:
             if config.compatible:
                 cookie = request.headers['cookie']
@@ -26,8 +35,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 nonceB64 = cookie.lstrip(config.cookie_key + '=')
             else:
                 nonceB64 = request.headers['sec-websocket-key']
-            nonce = base64.b64decode(nonceB64)
             try:
+                nonce = base64.b64decode(nonceB64)
                 self.initCipher(nonce, decryptor=True)
             except Exception as e:
                 logging.error('failed to initialize cipher: %s' % e)
@@ -35,19 +44,28 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         else:
             nonceB64 = nonce = None  # for decrypting
 
+        # ----- extract header -----
         self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')[:2]
         try:
             dat = base64.urlsafe_b64decode(self.http_request_path[1:])
             cmd = ord(self.decrypt(dat[:1]))
-            if cmd != self.CMD_REQ:
+            if cmd != self.CMD_REQ:  # fail faster by skipping HMAC check
                 raise ValueError('wrong command %s' % cmd)
-            addr, port, remainData = self.parseRelayHeader(dat)
+            addr, port, remainData, timestamp = self.parseRelayHeader(dat)
         except (ValueError, Base64Error) as e:
             logging.error('invalid header: %s (from %s), path: %s' %
                           (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
+        logging.info('requested %s <--> %s:%s' % (self.clientInfo, addr, port))
 
         if not config.tun_ssl:
+            # filter replay attack
+            seen = seenNonceByTime[timestamp // 10]
+            if nonce in seen:
+                logging.warning('replay attack detected')
+                raise ConnectionDeny(400)
+            seen.add(nonce)
+
             if config.compatible:
                 # avoid generating a new random nonce for encrypting, and client will do same
                 # calculating to get this nonce
@@ -58,16 +76,15 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 encNonce = get_sha1(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")[:16]
             self.initCipher(encNonce, encryptor=True)
 
-        self.connectTargetTask = asyncio.async_(self.connectTarget(addr, port, remainData))
+        self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
 
-    @asyncio.coroutine
+    @coroutine
     def connectTarget(self, addr, port, data):
         try:
-            reader, writer = yield from asyncio.open_connection(addr, port)
+            reader, writer = yield from open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
             logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.clientInfo))
             return self.resetTunnel(reason="can't connect to target: %s" % e)
-        logging.info('relay %s <--> %s:%s' % (self.clientInfo, addr, port))
         self.setProxy(reader, writer)
         assert data, 'some data must be sent right after connected to target'
         writer.write(data)
@@ -92,7 +109,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         else:
             super().onResetTunnel()
 
-    @asyncio.coroutine
+    @coroutine
     def onMessage(self, dat, isBinary):
         if not isBinary:
             logging.error('non binary ws message received (from %s)' % self.clientInfo)
@@ -112,22 +129,22 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             try:
                 if self.tunState != self.TUN_STATE_IDLE:
                     raise ValueError('wrong command %s' % cmd)
-                addr, port, remainData = self.parseRelayHeader(dat)
+                addr, port, remainData, __ = self.parseRelayHeader(dat)
             except ValueError as e:
                 logging.error('invalid header in reused tun: %s (from %s)' % (e, self.clientInfo))
                 return self.sendClose(3000)
             if self.connectTargetTask:
                 logging.debug('relay request received when connectTargetTask running')
                 # will order of messages be changed by waiting?
-                yield from asyncio.wait_for(self.connectTargetTask, None)
-            self.connectTargetTask = asyncio.async_(self.connectTarget(addr, port, remainData))
+                yield from wait_for(self.connectTargetTask, None)
+            self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState == self.TUN_STATE_RESETTING:
                 return
             if self.connectTargetTask:
                 logging.debug('data received when connectTargetTask running')
-                yield from asyncio.wait_for(self.connectTargetTask, None)
+                yield from wait_for(self.connectTargetTask, None)
             self._writer.write(dat)
         else:
             logging.error('wrong command: %s (from %s)' % (cmd, self.clientInfo))
@@ -135,6 +152,17 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
         return super().sendServerStatus(redirectUrl, redirectAfter) if redirectUrl else self.sendHtml('')
+
+
+@coroutine
+def clean_seen_nonce():
+    # it's unnecessary to clean expired one in time
+    while True:
+        yield from sleep(120)
+        expire_time = (time.time() - WSTunServerProtocol.REQ_TTL) // 10
+        expired = list(filter(lambda t: t < expire_time, seenNonceByTime.keys()))
+        for k in expired:
+            del seenNonceByTime[k]
 
 
 def silent_timeout_err_handler(loop, context):
@@ -165,9 +193,11 @@ def main():
         # inconvenience in dual stack server
         so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
-    print('wstan server -- listening on %s:%d' % (addr, port))
     if not config.debug:
         loop.set_exception_handler(silent_timeout_err_handler)
+    async_(clean_seen_nonce())
+
+    print('wstan server -- listening on %s:%d' % (addr, port))
     try:
         loop.run_forever()
     except KeyboardInterrupt:

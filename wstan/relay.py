@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import weakref
 import hmac
@@ -6,6 +5,7 @@ import struct
 import hashlib
 import time
 import random
+from asyncio import coroutine, async_
 from asyncio.streams import FlowControlMixin
 from wstan import config, parse_socks_addr
 if not config.tun_ssl:
@@ -22,7 +22,7 @@ def _get_digest(dat):
 
 
 class OurFlowControlMixin(FlowControlMixin):
-    @asyncio.coroutine
+    @coroutine
     def drain(self):
         """Wait for all queued messages to be sent."""
         yield from self._drain_helper()
@@ -73,16 +73,17 @@ class RelayMixin(OurFlowControlMixin):
 
         # If we are using SSL then checking timestamp is meaningless.
         # But for simplicity this field still present.
+        stamp = None
         if not config.tun_ssl:
             try:
-                t = struct.unpack('>d', dat[:TIMESTAMP_LEN])[0]
+                stamp = struct.unpack('>d', dat[:TIMESTAMP_LEN])[0]
             except struct.error:
                 raise ValueError('invalid timestamp')
-            if abs(time.time() - t) > self.REQ_TTL:
+            if abs(time.time() - stamp) > self.REQ_TTL:
                 raise ValueError('request expired (%.1fs old), decrypted dat: %s' %
-                                 (time.time() - t, dat))
+                                 (time.time() - stamp, dat))
 
-        return addr, port, remain
+        return addr, port, remain, stamp
 
     def makeRelayHeader(self, addr_header, remain):
         """Construct relay request header.
@@ -105,7 +106,7 @@ class RelayMixin(OurFlowControlMixin):
     def setProxy(self, reader, writer):
         self.tunState = self.TUN_STATE_USING
         self._reader, self._writer = reader, writer
-        self._pushToTunTask = asyncio.async_(self._pushToTunnelLoop())
+        self._pushToTunTask = async_(self._pushToTunnelLoop())
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""
@@ -113,7 +114,7 @@ class RelayMixin(OurFlowControlMixin):
         self._writer = self._reader = self._pushToTunTask = None
         self.tunState = self.TUN_STATE_IDLE
 
-    @asyncio.coroutine
+    @coroutine
     def _pushToTunnelLoop(self):
         while True:
             try:
