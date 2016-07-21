@@ -18,7 +18,7 @@ from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
 
 # noinspection PyAttributeOutsideInit
 class CustomWSClientProtocol(WebSocketClientProtocol):
-    """Add auto-ping switch (dirty way) and let us manually start handshaking."""
+    """Add auto-ping switch (dirty way) and let us start handshaking manually."""
     # this framework mix camel and underline naming style, nice!
     def __init__(self):
         WebSocketClientProtocol.__init__(self)
@@ -90,7 +90,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         RelayMixin.__init__(self)
         self.lastIdleTime = None
         self.checkTimeoutTask = None
-        self.tunOpen = Future()
         self.inPool = False
         self.canReturnErrorPage = False
         nonce = os.urandom(16)

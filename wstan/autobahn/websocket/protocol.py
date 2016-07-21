@@ -972,7 +972,7 @@ class WebSocketProtocol(object):
         # initial state
         self.state = WebSocketProtocol.STATE_CONNECTING
         self.send_state = WebSocketProtocol.SEND_STATE_GROUND
-        self.data = b""
+        self.data = bytearray()
 
         # for chopped/synched sends, we need to queue to maintain
         # ordering when recalling the reactor to actually "force"

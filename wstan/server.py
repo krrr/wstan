@@ -24,6 +24,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         self.connectTargetTask = None
 
     def onConnect(self, request):
+        self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')
         # ----- init decryptor -----
         if not config.tun_ssl:
             if config.compatible:
@@ -45,15 +46,14 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             nonceB64 = nonce = None  # for decrypting
 
         # ----- extract header -----
-        self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')[:2]
         try:
             dat = base64.urlsafe_b64decode(self.http_request_path[1:])
             cmd = ord(self.decrypt(dat[:1]))
-            if cmd != self.CMD_REQ:  # fail faster by skipping HMAC check
-                raise ValueError('wrong command %s' % cmd)
             addr, port, remainData, timestamp = self.parseRelayHeader(dat)
+            if cmd != self.CMD_REQ:
+                raise ValueError('wrong command %s' % cmd)
         except (ValueError, Base64Error) as e:
-            logging.error('invalid header: %s (from %s), path: %s' %
+            logging.error('invalid request: %s (from %s), path: %s' %
                           (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
         logging.info('requested %s <--> %s:%s' % (self.clientInfo, addr, port))
@@ -62,7 +62,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             # filter replay attack
             seen = seenNonceByTime[timestamp // 10]
             if nonce in seen:
-                logging.warning('replay attack detected')
+                logging.warning('replay attack detected (from %s)' % self.clientInfo)
                 raise ConnectionDeny(400)
             seen.add(nonce)
 
@@ -76,6 +76,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 encNonce = get_sha1(nonceB64.encode() + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")[:16]
             self.initCipher(encNonce, encryptor=True)
 
+        self.tunOpen.set_result(None)
         self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
 
     @coroutine
@@ -128,10 +129,10 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         elif cmd == self.CMD_REQ:
             try:
                 if self.tunState != self.TUN_STATE_IDLE:
-                    raise ValueError('wrong command %s' % cmd)
+                    raise Exception('reset received when not idle')
                 addr, port, remainData, __ = self.parseRelayHeader(dat)
-            except ValueError as e:
-                logging.error('invalid header in reused tun: %s (from %s)' % (e, self.clientInfo))
+            except Exception as e:
+                logging.error('invalid request in reused tun: %s (from %s)' % (e, self.clientInfo))
                 return self.sendClose(3000)
             if self.connectTargetTask:
                 logging.debug('relay request received when connectTargetTask running')
@@ -153,6 +154,17 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
         return super().sendServerStatus(redirectUrl, redirectAfter) if redirectUrl else self.sendHtml('')
 
+    def onClose(self, wasClean, code, reason, logWarn=True):
+        """Logging failed requests."""
+        logWarn = True
+        if reason and not self.tunOpen.done():
+            peer = '%s:%s' % self.transport.get_extra_info('peername')  # self.clientInfo is None
+            logging.warning(reason + ' (from %s)' % peer)
+            logWarn = False
+
+        RelayMixin.onClose(self, wasClean, code, reason, logWarn=logWarn)
+
+
 
 @coroutine
 def clean_seen_nonce():
@@ -167,9 +179,8 @@ def clean_seen_nonce():
 
 def silent_timeout_err_handler(loop, context):
     """Prevent asyncio from logging annoying TimeoutError."""
-    if isinstance(context['exception'], TimeoutError):
-        return
-    loop.default_exception_handler(context)
+    if not isinstance(context['exception'], TimeoutError):
+        loop.default_exception_handler(context)
 
 
 def main():

@@ -5,7 +5,7 @@ import struct
 import hashlib
 import time
 import random
-from asyncio import coroutine, async_
+from asyncio import coroutine, async_, Future
 from asyncio.streams import FlowControlMixin
 from wstan import config, parse_socks_addr
 if not config.tun_ssl:
@@ -38,12 +38,13 @@ class RelayMixin(OurFlowControlMixin):
     BUF_SIZE = random.randrange(4096, 8192)
     REQ_TTL = 60  # in seconds
     CMD_REQ, CMD_DAT, CMD_RST = range(3)  # every ws message has this command type
-    DAT_LOG_MAX_LEN = 270  # maximum length of logged data which triggered error, in bytes
+    DAT_LOG_MAX_LEN = 60  # maximum length of logged data which triggered error, in bytes
     allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
 
     def __init__(self):
         OurFlowControlMixin.__init__(self)
         self.tunState = self.TUN_STATE_IDLE
+        self.tunOpen = Future()  # connected and authenticated
         self._reader = None
         self._writer = None
         self._pushToTunTask = None
@@ -81,7 +82,7 @@ class RelayMixin(OurFlowControlMixin):
                 raise ValueError('invalid timestamp')
             if abs(time.time() - stamp) > self.REQ_TTL:
                 raise ValueError('request expired (%.1fs old), decrypted dat: %s' %
-                                 (time.time() - stamp, dat))
+                                 (time.time() - stamp, dat[:self.DAT_LOG_MAX_LEN]))
 
         return addr, port, remain, stamp
 
@@ -166,8 +167,8 @@ class RelayMixin(OurFlowControlMixin):
             self._writer.close()
         if self._pushToTunTask:
             self._pushToTunTask.cancel()
-        if logWarn and not wasClean or code != 1000:
-            logging.warning('tunnel broken: %s' % (reason or code or 'unknown reason'))
+        if logWarn and not wasClean and reason:
+            logging.warning('tunnel broken: ' + reason)
         if config.debug:
             self.allConn.remove(self)
             logging.debug('tunnel closed (total %d)' % len(self.allConn))
