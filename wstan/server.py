@@ -24,7 +24,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         self.connectTargetTask = None
 
     def onConnect(self, request):
-        self.clientInfo = '%s:%s' % self.transport.get_extra_info('peername')
+        self.clientInfo = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))
         # ----- init decryptor -----
         if not config.tun_ssl:
             if config.compatible:
@@ -56,7 +56,6 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             logging.error('invalid request: %s (from %s), path: %s' %
                           (e, self.clientInfo, self.http_request_path))
             raise ConnectionDeny(400)
-        logging.info('requested %s <--> %s:%s' % (self.clientInfo, addr, port))
 
         if not config.tun_ssl:
             # filter replay attack
@@ -81,6 +80,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     @coroutine
     def connectTarget(self, addr, port, data):
+        logging.info('requested %s <--> %s:%s' % (self.clientInfo, addr, port))
         try:
             reader, writer = yield from open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
@@ -93,8 +93,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     # next 2 overrides deal with a state which exists only in wstan server: CONNECTING
     def resetTunnel(self, reason=''):
-        if self.tunState == self.TUN_STATE_IDLE:
-            assert self.connectTargetTask
+        if self.connectTargetTask:
             self.connectTargetTask = None
             self.sendMessage(self.makeResetMessage(reason), True)
             self.tunState = self.TUN_STATE_RESETTING
@@ -102,7 +101,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             super().resetTunnel(reason)
 
     def onResetTunnel(self):
-        if self.tunState == self.TUN_STATE_IDLE:  # received reset before connected to target
+        if self.connectTargetTask:  # received reset before connected to target
             self.sendMessage(self.makeResetMessage(), True)
             self.connectTargetTask.cancel()
             self.connectTargetTask = None
@@ -134,10 +133,6 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             except Exception as e:
                 logging.error('invalid request in reused tun: %s (from %s)' % (e, self.clientInfo))
                 return self.sendClose(3000)
-            if self.connectTargetTask:
-                logging.debug('relay request received when connectTargetTask running')
-                # will order of messages be changed by waiting?
-                yield from wait_for(self.connectTargetTask, None)
             self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
@@ -145,6 +140,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 return
             if self.connectTargetTask:
                 logging.debug('data received when connectTargetTask running')
+                # will order of messages be changed by waiting?
                 yield from wait_for(self.connectTargetTask, None)
             self._writer.write(dat)
         else:
@@ -158,12 +154,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         """Logging failed requests."""
         logWarn = True
         if reason and not self.tunOpen.done():
-            peer = '%s:%s' % self.transport.get_extra_info('peername')  # self.clientInfo is None
+            peer = '{0}:{1}'.format(*self.transport.get_extra_info('peername')) # self.clientInfo is None
             logging.warning(reason + ' (from %s)' % peer)
             logWarn = False
 
         RelayMixin.onClose(self, wasClean, code, reason, logWarn=logWarn)
-
 
 
 @coroutine
@@ -204,8 +199,7 @@ def main():
         # inconvenience in dual stack server
         so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
-    if not config.debug:
-        loop.set_exception_handler(silent_timeout_err_handler)
+    loop.set_exception_handler(silent_timeout_err_handler)
     async_(clean_seen_nonce())
 
     print('wstan server -- listening on %s:%d' % (addr, port))

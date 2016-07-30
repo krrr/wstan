@@ -150,6 +150,7 @@ class RelayMixin(OurFlowControlMixin):
             self.tunState = self.TUN_STATE_RESETTING
         else:
             self.sendClose(3001)
+            logging.error('wrong state in resetTunnel: %s' % self.tunState)
 
     def onResetTunnel(self):
         if self.tunState == self.TUN_STATE_USING:
@@ -161,6 +162,7 @@ class RelayMixin(OurFlowControlMixin):
             self.succeedReset()
         else:
             self.sendClose(3001)
+            logging.error('wrong state in onResetTunnel: %s' % self.tunState)
 
     def onClose(self, wasClean, code, reason, logWarn=True):
         if self._writer:
