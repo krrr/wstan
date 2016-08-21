@@ -1496,7 +1496,7 @@ class WebSocketProtocol(object):
             else:
                 data = self.data
                 length = buffered_len
-                self.data = b''
+                self.data = bytearray()
 
             if length > 0:
                 # unmask payload

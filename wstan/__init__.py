@@ -29,7 +29,7 @@ import re
 from binascii import Error as Base64Error
 from collections import deque
 
-__version__ = '0.2.1'
+__version__ = '0.3'
 
 # patch asyncio because "async" will become a keyword sooner or later
 asyncio.async_ = getattr(asyncio, 'ensure_future', None) or getattr(asyncio, 'async')
