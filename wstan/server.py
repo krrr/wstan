@@ -10,9 +10,9 @@ from wstan.relay import RelayMixin
 from wstan import loop, config, die, get_sha1, Base64Error
 
 
-# key is timestamp, value is list of nonce saved at timestamp ~ (timestamp+10)
-# last digit of timestamp is always 0
-# used to detect replay attack, but will fail when genuine request being delayed
+# key is timestamp//10, value is list of nonce
+# used to detect replay attack (temper bits of ciphertext and observe server's reaction)
+# it will fail if genuine request being delayed
 seenNonceByTime = defaultdict(set)
 
 
@@ -154,7 +154,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         """Logging failed requests."""
         logWarn = True
         if reason and not self.tunOpen.done():
-            peer = '{0}:{1}'.format(*self.transport.get_extra_info('peername')) # self.clientInfo is None
+            peer = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))  # self.clientInfo is None
             logging.warning(reason + ' (from %s)' % peer)
             logWarn = False
 
@@ -172,10 +172,10 @@ def clean_seen_nonce():
             del seenNonceByTime[k]
 
 
-def silent_timeout_err_handler(loop, context):
+def silent_timeout_err_handler(loop_, context):
     """Prevent asyncio from logging annoying TimeoutError."""
     if not isinstance(context['exception'], TimeoutError):
-        loop.default_exception_handler(context)
+        loop_.default_exception_handler(context)
 
 
 def main():

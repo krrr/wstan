@@ -339,9 +339,9 @@ def socks5_tcp_handler(dat, reader, writer):
         writer.write(b'\x05\x07\x00\x01' + b'\x00' * 6)  # \x07 == COMMAND NOT SUPPORTED
         return writer.close()
 
-    # By accepting request before connected to target delay can be lowered (of a round-trip).
-    # But SOCKS client can't get real reason when error happens (Firefox always display
-    # connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
+    # Delay can be lowered (of a round-trip) by accepting request before connected to target.
+    # But SOCKS client can't get real reason when error happens (not a big broplem, Firefox always
+    # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
     dat = yield from reader.read(2048)
     if not dat:

@@ -1,4 +1,4 @@
-# Copyright (c) 2016 krrr
+# Copyright (c) 2017 krrr
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -207,7 +207,7 @@ class InMemoryLogHandler(logging.Handler):
 
 
 def main_entry():
-    if not sys.version_info >= (3, 3, 0):
+    if not sys.version_info >= (3, 3):
         die('Python 3.3 or higher required')
 
     global config, loop

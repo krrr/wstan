@@ -2,7 +2,7 @@
 [![PyPI](https://img.shields.io/pypi/v/wstan.svg)](https://pypi.python.org/pypi/wstan)
 [![PyPI](https://img.shields.io/pypi/pyversions/wstan.svg)](https://pypi.python.org/pypi/wstan)
 
-Tunneling TCP connections in WebSocket to circumventing firewalls.
+Tunneling TCP connections in WebSocket to circumvent firewall.
 It's light and can run on some PaaS (with SSL support).
 
 ## Features
@@ -69,11 +69,12 @@ wstan wss://yours.rhcloud.com:8443 KEY -z  # client
 Goal: make active probing against server side more difficult while
 still keeping low latency of connection establishment and being stateless (inspired by shadowsocks).
 
-Limitation: can't prevent MITM attack; client can't detect fake server; replay attack detection may fail
+Weakness: can't prevent MITM attack; client can't detect fake server (may receive garbage data if MITMed);
+replay attack detection may fail
 
 Tech Detail:
 * request frame has HMAC and timestamp (data frame has nothing), and all frames are encrypted using AES-128-CTR
 * server will save encryption nonce and timestamp when receiving valid request (to detect replay attack)
-* when establishing a connection, request frame will be encoded into URI (to achieve low latency)
+* the first request frame will be encoded into URI of WS handshake (to achieve low latency)
 * it assumes that a TCP client will send some data to server right after connection established, and those data will be put into request frame
 * it has a connection pool
