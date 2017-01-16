@@ -226,6 +226,10 @@ def main_entry():
         h.setFormatter(logging.Formatter('%(asctime)s %(levelname).1s: %(message)s', '%H:%M:%S'))
         h.setLevel(logging.INFO)
 
+    if config.debug and hasattr(loop, 'set_debug'):
+        loop.set_debug(True)
+        logging.getLogger('asyncio').setLevel(logging.WARNING)
+
     if config.server:
         from wstan.server import main
     else:
