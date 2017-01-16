@@ -143,6 +143,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState != self.TUN_STATE_USING:
+                if self.tunState == self.TUN_STATE_IDLE:
+                    logging.debug('IDLE should not appear here!')
                 # Reset command sent, but server will keep sending data before
                 # receiving the command.
                 # Can't just throw away dat, because decryptor need to be updated
@@ -199,6 +201,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.checkTimeoutTask = None
             tun.tryRemoveFromPool()
             tun.setAutoPing(cls.TUN_AUTO_PING_INTERVAL, cls.TUN_AUTO_PING_TIMEOUT)
+            tun.canReturnErrorPage = canErr
+            tun.setProxy(reader, writer)
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
         else:
             try:
@@ -212,8 +216,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                     sock=sock, ssl=config.tun_ssl))[1]
                 # lower latency by sending relay header and data in ws handshake
                 tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
+                tun.canReturnErrorPage = canErr
+                tun.setProxy(reader, writer)
                 async_(tun.restartHandshake())
-                yield from wait_for(tun.tunOpen, tun.openHandshakeTimeout)
             except Exception as e:
                 if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
                     # sometimes reason can be None in extremely poor network
@@ -225,8 +230,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 if canErr:
                     writer.write(gen_error_page("can't connect to wstan server", msg))
                 return writer.close()
-        tun.canReturnErrorPage = canErr
-        tun.setProxy(reader, writer)
 
 
 factory = WebSocketClientFactory(config.uri)
@@ -274,7 +277,7 @@ def dispatch_proxy(reader, writer):
         return writer.close()
 
     try:
-        yield from handler(dat, reader, writer)
+        async_(handler(dat, reader, writer))
     except ConnectionError:
         writer.close()
 
@@ -315,7 +318,7 @@ def http_proxy_handler(dat, reader, writer):
         dat = method + b' ' + path + b' ' + ver + rest_dat
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
-    yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
+    async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
 
 
 @coroutine
@@ -347,7 +350,7 @@ def socks5_tcp_handler(dat, reader, writer):
     if not dat:
         return writer.close()
 
-    yield from WSTunClientProtocol.startProxy(addr_header, dat, reader, writer)
+    async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
 
 
 @coroutine
