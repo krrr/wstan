@@ -17,6 +17,8 @@ seenNonceByTime = defaultdict(set)
 
 
 class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
+    PUSH_TO_TUN_CONN_ERR_MSG = 'connection to target broken'
+
     def __init__(self):
         WebSocketServerProtocol.__init__(self)
         RelayMixin.__init__(self)

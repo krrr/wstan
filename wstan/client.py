@@ -83,6 +83,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     TUN_AUTO_PING_TIMEOUT = 30
     POOL_AUTO_PING_INTERVAL = 10  # in-pool connection fail faster
     POOL_AUTO_PING_TIMEOUT = 6
+    PUSH_TO_TUN_CONN_ERR_MSG = 'connection to user-agent broken'
     pool = deque()
 
     def __init__(self):

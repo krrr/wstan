@@ -39,6 +39,7 @@ class RelayMixin(OurFlowControlMixin):
     REQ_TTL = 60  # in seconds
     CMD_REQ, CMD_DAT, CMD_RST = range(3)  # every ws message has this command type
     DAT_LOG_MAX_LEN = 60  # maximum length of logged data which triggered error, in bytes
+    PUSH_TO_TUN_CONN_ERR_MSG = 'override me!'
     allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
 
     def __init__(self):
@@ -121,8 +122,7 @@ class RelayMixin(OurFlowControlMixin):
             try:
                 dat = yield from self._reader.read(self.BUF_SIZE)
             except ConnectionError:
-                # this may also happen in wstan client, but rare, so assume it's in server
-                return self.resetTunnel('connection to target broken')
+                return self.resetTunnel(self.PUSH_TO_TUN_CONN_ERR_MSG)
             if not dat:
                 return self.resetTunnel()
             dat = bytes([self.CMD_DAT]) + dat
@@ -144,6 +144,7 @@ class RelayMixin(OurFlowControlMixin):
 
     def resetTunnel(self, reason=''):
         if self.tunState == self.TUN_STATE_USING:
+            logging.debug('resetting tunnel')
             self.sendMessage(self.makeResetMessage(reason), True)
             self._pushToTunTask.cancel()
             self._writer.close()
