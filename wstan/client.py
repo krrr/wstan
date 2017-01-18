@@ -47,6 +47,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def restartHandshake(self):
         """Resume delayed handshake. It enable us to customize handshake HTTP header."""
         yield from wait_for(self._delayedHandshake, None)
+
         if config.compatible:
             self.websocket_key = base64.b64encode(os.urandom(16))
         else:
@@ -215,8 +216,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                     factory, None if sock else config.uri_addr, None if sock else config.uri_port,
                     server_hostname=config.uri_addr if config.tun_ssl else None,
                     sock=sock, ssl=config.tun_ssl))[1]
-                # lower latency by sending relay header and data in ws handshake
-                tun.customUriPath = '/' + base64.urlsafe_b64encode(tun.makeRelayHeader(addrHeader, dat)).decode()
+                # Lower latency by sending relay header and data in ws handshake
+                tun.customUriPath = factory.path + base64.urlsafe_b64encode(
+                        tun.makeRelayHeader(addrHeader, dat)).decode()
                 tun.canReturnErrorPage = canErr
                 tun.setProxy(reader, writer)
                 async_(tun.restartHandshake())
@@ -237,6 +239,8 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
+if not factory.path.endswith('/'):
+    factory.path += '/'
 
 
 def translate_err_msg(msg):

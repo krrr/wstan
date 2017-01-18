@@ -48,15 +48,18 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             nonceB64 = nonce = None  # for decrypting
 
         # ----- extract header -----
+        path = self.http_request_path
         try:
-            dat = base64.urlsafe_b64decode(self.http_request_path[1:])
+            if path.startswith(factory.path):
+                path = path[len(factory.path):]
+            dat = base64.urlsafe_b64decode(path[1:] if path.startswith('/') else path)
             cmd = ord(self.decrypt(dat[:1]))
             addr, port, remainData, timestamp = self.parseRelayHeader(dat)
             if cmd != self.CMD_REQ:
                 raise ValueError('wrong command %s' % cmd)
         except (ValueError, Base64Error) as e:
             logging.error('invalid request: %s (from %s), path: %s' %
-                          (e, self.clientInfo, self.http_request_path))
+                          (e, self.clientInfo, path))
             raise ConnectionDeny(400)
 
         if not config.tun_ssl:
@@ -180,16 +183,17 @@ def silent_timeout_err_handler(loop_, context):
         loop_.default_exception_handler(context)
 
 
+factory = WebSocketServerFactory(config.uri)
+factory.protocol = WSTunServerProtocol
+factory.server = ''  # hide Server field of handshake HTTP header
+factory.autoPingInterval = 400  # only used to clear half-open connections
+factory.autoPingTimeout = 30
+factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
+
+
 def main():
     addr = config.tun_addr or config.uri_addr
     port = config.tun_port or config.uri_port
-    uri = config.uri
-    factory = WebSocketServerFactory(uri)
-    factory.protocol = WSTunServerProtocol
-    factory.server = ''  # hide Server field of handshake HTTP header
-    factory.autoPingInterval = 400  # only used to clear half-open connections
-    factory.autoPingTimeout = 30
-    factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
 
     try:
         server = loop.run_until_complete(loop.create_server(factory, addr, port))

@@ -150,6 +150,9 @@ def load_config():
         if not getattr(args, i):
             die('%s not specified' % i)
 
+    if '?' in args.uri:
+        die('URI should not contain query')
+
     try:
         args.key = base64.b64decode(args.key)
         assert len(args.key) == 16
