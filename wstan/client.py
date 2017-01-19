@@ -158,6 +158,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onClose(self, *args):
         if not self.tunOpen.done():
+            # sometimes reason can be None in extremely poor network
+            msg = self.wasNotCleanReason or ''
+            msg = translate_err_msg(msg)
+            logging.error("can't connect to server: %s" % msg)
+            if self.wasNotCleanReason and self.canReturnErrorPage:  # write before closing writer
+                self._writer.write(gen_error_page("can't connect to wstan server", msg))
             RelayMixin.onClose(self, *args, logWarn=False)
             self.tunOpen.cancel()
         else:
@@ -222,13 +228,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 tun.canReturnErrorPage = canErr
                 tun.setProxy(reader, writer)
                 async_(tun.restartHandshake())
+                # Data may arrive before setProxy if wait for onOpen here
+                # and then set proxy.
             except Exception as e:
-                if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
-                    # sometimes reason can be None in extremely poor network
-                    msg = tun.wasNotCleanReason or ''
-                else:
-                    msg = str(e)
-                msg = translate_err_msg(msg)
+                msg = translate_err_msg(str(e))
                 logging.error("can't connect to server: %s" % msg)
                 if canErr:
                     writer.write(gen_error_page("can't connect to wstan server", msg))
@@ -247,7 +250,7 @@ def translate_err_msg(msg):
     # Windows error code reference: https://support.microsoft.com/en-us/kb/819124
     if msg == '[Errno -2] Name or service not known':
         return 'server not found'
-    elif msg == 'WebSocket connection upgrade failed (400 - None)':
+    elif msg.startswith('WebSocket connection upgrade failed (400'):
         return 'forbidden (maybe key is wrong or system clock is out of sync)'
     elif 'getaddrinfo failed' in msg:
         return 'DNS lookup failed'
