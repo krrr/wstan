@@ -285,7 +285,7 @@ def dispatch_proxy(reader, writer):
         return writer.close()
 
     try:
-        async_(handler(dat, reader, writer))
+        yield from handler(dat, reader, writer)
     except ConnectionError:
         writer.close()
 
