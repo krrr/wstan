@@ -87,11 +87,11 @@ class RelayMixin(OurFlowControlMixin):
 
         return addr, port, remain, stamp
 
-    def makeRelayHeader(self, addr_header, remain):
+    def makeRelayHeader(self, addr_header, remain_data):
         """Construct relay request header.
         Format: CMD_REQ | timestamp | SOCKS address header | rest data | hmac-sha1 of previous parts
         If encryption enabled then timestamp and parts after it will be encrypted."""
-        dat = struct.pack('>Bd', self.CMD_REQ, time.time()) + addr_header + remain
+        dat = struct.pack('>Bd', self.CMD_REQ, time.time()) + addr_header + (remain_data or b'')
         dat = self.encrypt(dat)
         return dat + _get_digest(dat)
 
@@ -105,10 +105,11 @@ class RelayMixin(OurFlowControlMixin):
             dec = cipher.decryptor()
             self.decrypt = lambda dat: dec.update(dat)
 
-    def setProxy(self, reader, writer):
+    def setProxy(self, reader, writer, startPushLoop=True):
         self.tunState = self.TUN_STATE_USING
         self._reader, self._writer = reader, writer
-        self._pushToTunTask = async_(self._pushToTunnelLoop())
+        if startPushLoop:
+            self._pushToTunTask = async_(self._pushToTunnelLoop())
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""

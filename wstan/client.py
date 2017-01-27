@@ -117,6 +117,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     def onOpen(self):
         self.tunOpen.set_result(None)
         self.lastIdleTime = time.time()
+        assert not self._pushToTunTask
+        self._pushToTunTask = async_(self._pushToTunnelLoop())
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
             self.customUriPath = None  # save memory
@@ -200,6 +202,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     @classmethod
     @coroutine
     def startProxy(cls, addrHeader, dat, reader, writer):
+        if not dat:
+            logging.debug('startProxy with no data')
         canErr = can_return_error_page(dat)
 
         if cls.pool:
@@ -226,7 +230,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 tun.customUriPath = factory.path + base64.urlsafe_b64encode(
                         tun.makeRelayHeader(addrHeader, dat)).decode()
                 tun.canReturnErrorPage = canErr
-                tun.setProxy(reader, writer)
+                tun.setProxy(reader, writer, startPushLoop=False)
                 async_(tun.restartHandshake())
                 # Data may arrive before setProxy if wait for onOpen here
                 # and then set proxy.
@@ -314,18 +318,21 @@ def http_proxy_handler(dat, reader, writer):
         txt = 'wstan log (latest 200, descending):\n\n' + '\n'.join(reversed(InMemoryLogHandler.logs))
         writer.write(makeHttpResp(txt, type_='text/plain'))
         return writer.close()
-    logging.info('requesting %s:%d' % (host.decode(), port))
-    addr_header = make_socks_addr(host, port) 
+    addr_header = make_socks_addr(host, port)
 
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-        dat = yield from reader.read(2048)
-        if not dat:
-            return writer.close()
+        try:
+            dat = yield from wait_for(reader.read(2048), 0.01)
+            if not dat:
+                return writer.close()
+        except asyncio.TimeoutError:
+            dat = None
     else:
         dat = method + b' ' + path + b' ' + ver + rest_dat
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
+    logging.info('requesting %s:%d' % (host.decode(), port))
     async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
 
 
@@ -345,19 +352,25 @@ def socks5_tcp_handler(dat, reader, writer):
     except (ValueError, IndexError):
         logging.warning('invalid SOCKS v5 relay request')
         return writer.close()
-    logging.info('requesting %s:%d' % (target_addr, target_port))
     if cmd != 0x01:  # CONNECT
         writer.write(b'\x05\x07\x00\x01' + b'\x00' * 6)  # \x07 == COMMAND NOT SUPPORTED
         return writer.close()
 
     # Delay can be lowered (of a round-trip) by accepting request before connected to target.
-    # But SOCKS client can't get real reason when error happens (not a big broplem, Firefox always
+    # But SOCKS client can't get real reason when error happens (not a big problem, Firefox always
     # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
-    dat = yield from reader.read(2048)
-    if not dat:
-        return writer.close()
+    try:
+        dat = yield from wait_for(reader.read(2048), 0.01)
+        if not dat:
+            return writer.close()
+    except asyncio.TimeoutError:
+        # 10ms passed and no data received, rare but legal behavior.
+        # 10ms extra delay for the rare situation can be avoided, but not worthwhile
+        # e.g. Old SSH client will wait for server after conn established
+        dat = None
 
+    logging.info('requesting %s:%d' % (target_addr, target_port))
     async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
 
 

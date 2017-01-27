@@ -92,8 +92,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.clientInfo))
             return self.resetTunnel(reason="can't connect to target: %s" % e)
         self.setProxy(reader, writer)
-        assert data, 'some data must be sent right after connected to target'
-        writer.write(data)
+        if data:
+            writer.write(data)
         self.connectTargetTask = None
 
     # next 2 overrides deal with a state which exists only in wstan server: CONNECTING

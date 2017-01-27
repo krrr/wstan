@@ -29,7 +29,7 @@ import re
 from binascii import Error as Base64Error
 from collections import deque
 
-__version__ = '0.3'
+__version__ = '0.3.1'
 
 # patch asyncio because "async" will become a keyword sooner or later
 asyncio.async_ = getattr(asyncio, 'ensure_future', None) or getattr(asyncio, 'async')
@@ -185,7 +185,7 @@ def is_http_req(dat):
 
 
 def can_return_error_page(dat):
-    return bool(_http_req.match(dat) and any(map(_accept_html.match, dat.split(b'\r\n'))))
+    return dat and bool(_http_req.match(dat) and any(map(_accept_html.match, dat.split(b'\r\n'))))
 
 
 def gen_error_page(title, detail):
