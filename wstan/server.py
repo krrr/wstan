@@ -24,6 +24,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         RelayMixin.__init__(self)
         self.clientInfo = None
         self.connectTargetTask = None
+        self._dataToTarget = b''
 
     def onConnect(self, request):
         self.clientInfo = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))
@@ -94,9 +95,16 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         self.setProxy(reader, writer)
         if data:
             writer.write(data)
+        if self._dataToTarget:
+            writer.write(self._dataToTarget)
+            self._dataToTarget = None
         self.connectTargetTask = None
 
-    # next 2 overrides deal with a state which exists only in wstan server: CONNECTING
+    # next 2 overrides deal with a implicit state which exists only in wstan server: CONNECTING
+    # data received during CONNECTING will be sent after connected
+    # IDLE --onConnect--> CONNECTING --connectTarget--> USING
+    # CONNECTING --RST-received-and-RST-sent--> IDLE
+    # CONNECTING --RST-sent--> RESETTING --RST-received--> IDLE
     def resetTunnel(self, reason=''):
         if self.connectTargetTask:
             self.connectTargetTask = None
@@ -144,9 +152,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             if self.tunState == self.TUN_STATE_RESETTING:
                 return
             if self.connectTargetTask:
-                logging.debug('data received when connectTargetTask running')
-                # will order of messages be changed by waiting?
-                yield from wait_for(self.connectTargetTask, None)
+                self._dataToTarget += dat
+                return
             self._writer.write(dat)
         else:
             logging.error('wrong command: %s (from %s)' % (cmd, self.clientInfo))
