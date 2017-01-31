@@ -252,8 +252,9 @@ if not factory.path.endswith('/'):
 
 def translate_err_msg(msg):
     # Windows error code reference: https://support.microsoft.com/en-us/kb/819124
-    if msg == '[Errno -2] Name or service not known':
-        return 'server not found'
+    if msg in ('[Errno -2] Name or service not known',
+               '[Errno -5] No address associated with hostname'):
+        return 'non-existent domain'
     elif msg.startswith('WebSocket connection upgrade failed (400'):
         return 'forbidden (maybe key is wrong or system clock is out of sync)'
     elif 'getaddrinfo failed' in msg:
