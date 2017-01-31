@@ -13,6 +13,7 @@ setup(name='wstan',
       keywords='proxy tunnel websocket',
       packages=find_packages(),
       install_requires=['cryptography'],
+      extras_require={'advanced_web_log_viewer': ['jinja2']},
       classifiers=[
           'Topic :: Internet :: Proxy Servers',
           'Intended Audience :: Developers',

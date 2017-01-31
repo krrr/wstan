@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>wstan web log viewer</title>
+  <style>
+    ul { font-family: "Consolas", monospace; }
+    .warning-row { background: #fff8ac; }
+    .error-row { background: #ff8e8e; }
+  </style>
+
+</head>
+<body>
+  <h2 id="_nano_title">wstan v{{ version }}</h2>
+
+  <h3>log (latest 200, descending)</h3>
+  <ul class="pure-list">
+    {% for i in logs %}
+      <li class="{{ {'W': 'warning', 'I': 'info', 'E': 'error'}[i[9]] + '-row' }}">{{ i }}</li>
+    {% endfor %}
+  </ul>
+</body>
+</html>

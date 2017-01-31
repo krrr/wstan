@@ -13,7 +13,7 @@ from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketC
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
                    gen_error_page, get_sha1, make_socks_addr, http_die_soon, is_http_req,
-                   InMemoryLogHandler)
+                   InMemoryLogHandler, __version__)
 
 
 # noinspection PyAttributeOutsideInit
@@ -242,14 +242,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 return writer.close()
 
 
-factory = WebSocketClientFactory(config.uri)
-factory.protocol = WSTunClientProtocol
-factory.useragent = ''
-factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
-if not factory.path.endswith('/'):
-    factory.path += '/'
-
-
 def translate_err_msg(msg):
     # Windows error code reference: https://support.microsoft.com/en-us/kb/819124
     if msg in ('[Errno -2] Name or service not known',
@@ -269,6 +261,15 @@ def translate_err_msg(msg):
     else:
         return msg
 
+
+def gen_log_view_page():
+    if logViewTemplate is None:
+        txt = 'wstan log (latest 200, descending):\n\n' + \
+              '\n'.join(reversed(InMemoryLogHandler.logs))
+        return makeHttpResp(txt, type_='text/plain')
+    else:
+        return makeHttpResp(logViewTemplate.render(version=__version__,
+                                                   logs=tuple(reversed(InMemoryLogHandler.logs))))
 
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
@@ -316,8 +317,7 @@ def http_proxy_handler(dat, reader, writer):
         parsed = urlparse.urlparse(url)
         path, host, port = parsed.path, parsed.hostname, parsed.port or 80
     else:
-        txt = 'wstan log (latest 200, descending):\n\n' + '\n'.join(reversed(InMemoryLogHandler.logs))
-        writer.write(makeHttpResp(txt, type_='text/plain'))
+        writer.write(gen_log_view_page())
         return writer.close()
     addr_header = make_socks_addr(host, port)
 
@@ -414,6 +414,25 @@ def setup_http_tunnel():
         logging.warning('got extra data in HTTP proxy resp: %s' % dat[end+4:])
 
     return sock
+
+
+# load html template (optional) for web log viewer
+try:
+    import jinja2
+    import pkg_resources
+except ImportError:
+    logViewTemplate = None  # fallback to plain text version
+else:
+    logViewTemplate = jinja2.Template(
+        pkg_resources.resource_string(__package__, 'logview.html').decode('utf-8'))
+
+
+factory = WebSocketClientFactory(config.uri)
+factory.protocol = WSTunClientProtocol
+factory.useragent = ''
+factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
+if not factory.path.endswith('/'):
+    factory.path += '/'
 
 
 def main():
