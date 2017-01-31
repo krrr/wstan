@@ -6,12 +6,12 @@ Tunneling TCP connections in WebSocket to circumvent firewall.
 It's light and can run on some PaaS (with SSL support).
 
 ## Features
-* Authentication
+* Encryption
 * Proxy support (using HTTP CONNECT; [test your proxy](http://www.websocket.org/echo.html))
 * Display error message in browser (plain HTTP only)
 * SOCKS v5 and HTTP(S) in the same port (HTTP proxy is slower)
 
-WARN: Do not rely it on security when not using SSL (encryption always enabled, but is much weaker than SSH tunnel)
+WARN: Do not rely it on security when not using SSL
 
 ## Usage
 ```
@@ -64,17 +64,17 @@ wstan wss://yours.rhcloud.com:8443 KEY -z  # client
 * etherws (VPN)
 * websockify (not for circumventing FW)
 * [gost](https://github.com/ginuerzh/gost/)
+* [v2ray](https://www.v2ray.com)
 
 ## Details
-Goal: make active probing against server side more difficult while
+Original Goal: make active probing against server side more difficult while
 still keeping low latency of connection establishment and being stateless (inspired by shadowsocks).
 
-Weakness: can't prevent MITM attack; client can't detect fake server (may receive garbage data if MITMed);
+Weakness: can't prevent MITM attack; client can't detect fake server (may receive garbage data);
 replay attack detection may fail
 
 Tech Detail:
 * request frame has HMAC and timestamp (data frame has nothing), and all frames are encrypted using AES-128-CTR
 * server will save encryption nonce and timestamp when receiving valid request (to detect replay attack)
 * the first request frame will be encoded into URI of WS handshake (to achieve low latency)
-* it assumes that a TCP client will send some data to server right after connection established, and those data will be put into request frame
 * it has a connection pool
