@@ -3,21 +3,60 @@
 <head>
   <meta charset="UTF-8">
   <title>wstan web log viewer</title>
+  <link href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAAAAAAAAAAAADIAAAAiAAAAIgAAACIAAAAiAAAAIgAAACIAAAAiAAAAIgAAACIAAAAiAAAAIgAAACIAAAAiAAAAIgAAADIAAAAiAAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAiAAAAIgAAABmAAAAfwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB3AAAAZgAAAIgAAACIAAAAZgAAAP8AAAB/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB3AAAA/wAAAGYAAACIAAAAiAAAAGYAAAD/AAAA/wAAAH8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB3AAAA/wAAAP8AAABmAAAAiAAAAIgAAABmAAAA/wAAAP8AAAD/AAAAfwAAAAAAAAAAAAAAAAAAAAAAAAB3AAAA/wAAAP8AAAD/AAAAZgAAAIgAAACIAAAAZgAAAP8AAAD/AAAA/wAAAP8AAABRAAAAAAAAAAAAAABRAAAA/wAAAP8AAAD/AAAA/wAAAGYAAACIAAAAiAAAAGYAAAD/AAAA/wAAAP8AAAD/AAAAZgAAAAAAAAAAAAAAZgAAAP8AAAD/AAAA/wAAAP8AAABmAAAAiAAAAIgAAABZAAAA/wAAAP8AAAD/AAAA/wAAAIgAAAAAAAAAAAAAAIgAAAD/AAAA/wAAAP8AAAD/AAAAWQAAAIkAAACLAAAAMwAAAP8AAAD/AAAA/wAAAP8AAAD4AAAAhwAAAIgAAAD4AAAA/wAAAP8AAAD/AAAA/wAAADEAAACLAAAAhgAAAAoAAADcAAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAANoAAAALAAAAhAAAAC0AAABvAAAAVAAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAABRAAAAbwAAACsAAAAAAAAAhgAAACUAAACBAAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAB/AAAAJgAAAIMAAAAAAAAAAAAAAAcAAACaAAAAJQAAAFQAAADdAAAA/wAAAP8AAAD/AAAA/wAAANsAAABSAAAAJgAAAJkAAAAGAAAAAAAAAAAAAAAAAAAABwAAAIYAAABvAAAACgAAADIAAABbAAAAWwAAADEAAAALAAAAcAAAAIUAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQAAAIYAAACLAAAAiAAAAIkAAACLAAAAhQAAACwAAAAAAAAAAAAAAAAAAAAAAAAAAD/8AAAf+AAAD/AAAAfgAAADwAAAAYAAAAGAAAABgAAAAAAAAAAAAAAAAAAAgAEAAMADAADgBwAA8A8AAA==" rel="icon" type="image/x-icon" />
   <style>
-    ul { font-family: "Consolas", monospace; }
+    body {
+      top: 0px;
+      bottom: 0px;
+      position: fixed;
+      right: 0;
+      left: 0;
+      display: flex;
+      flex-flow: column;
+    }
+    ul {
+      margin: 0;
+      padding: 2px;
+      font-family: monospace;
+      list-style-type: none;
+      border: 1px solid gray;
+      font-size: 13px;
+      overflow: hidden;
+      overflow-y: scroll;
+      flex-grow: 1;
+    }
     .warning-row { background: #fff8ac; }
     .error-row { background: #ff8e8e; }
+    .debug-row { background: #f0f0f0; }
   </style>
-
+  <script>
+    var mouseDown = 0;
+    document.onmousedown = function() {
+      ++mouseDown;
+    }
+    document.onmouseup = function() {
+      --mouseDown;
+    }
+    function refresh() {
+      if (window.getSelection().toString() === "" && mouseDown == 0)
+        window.location.reload();
+    }
+    setInterval(refresh, 2000);
+  </script>
 </head>
-<body>
-  <h2 id="_nano_title">wstan v{{ version }}</h2>
 
-  <h3>log (latest 200, descending)</h3>
-  <ul class="pure-list">
+<body>
+  <h2>wstan log viewer</h2>
+
+  Version: v{{ version }}
+  &nbsp;-&nbsp;
+  RTT: {% if rtt %} {{ (rtt*1000)|int }}ms {% else %} N/A {% endif %}
+  <h4>log (latest first)</h4>
+  <ul>
     {% for i in logs %}
-      <li class="{{ {'W': 'warning', 'I': 'info', 'E': 'error'}[i[9]] + '-row' }}">{{ i }}</li>
+      <li class="{{ {'W':'warning', 'I':'info', 'E':'error', 'D':'debug'}[i[9]] + '-row' }}">{{ i }}</li>
     {% endfor %}
   </ul>
+  <span style="color: #888; text-align: right">select text to stop auto refresh</span>
 </body>
 </html>

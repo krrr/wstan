@@ -227,7 +227,7 @@ def main_entry():
         h = InMemoryLogHandler()
         logging.getLogger().addHandler(h)
         h.setFormatter(logging.Formatter('%(asctime)s %(levelname).1s: %(message)s', '%H:%M:%S'))
-        h.setLevel(logging.INFO)
+        h.setLevel(logging.DEBUG if config.debug else logging.INFO)
 
     if config.debug and hasattr(loop, 'set_debug'):
         loop.set_debug(True)

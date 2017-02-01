@@ -24,6 +24,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         WebSocketClientProtocol.__init__(self)
         self.customUriPath = '/'
         self.customWsKey = None
+        self.handshakeSentTime = None
         self._delayedHandshake = Future()
 
     def setAutoPing(self, interval, timeout):
@@ -69,6 +70,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
             request.append('User-Agent: %s' % self.factory.useragent)
         self.http_request_data = '\r\n'.join(request).encode('utf8') + b'\r\n\r\n'
         self.sendData(self.http_request_data)
+        self.handshakeSentTime = time.time()
         if self.debug:
             self.log.debug(request)
 
@@ -85,6 +87,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_AUTO_PING_INTERVAL = 10  # in-pool connection fail faster
     POOL_AUTO_PING_TIMEOUT = 6
     PUSH_TO_TUN_CONN_ERR_MSG = 'connection to user-agent broken'
+    rtt = None  # smoothed RTT
     pool = deque()
 
     def __init__(self):
@@ -116,7 +119,16 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onOpen(self):
         self.tunOpen.set_result(None)
-        self.lastIdleTime = time.time()
+        now = time.time()
+        self.lastIdleTime = now
+
+        # measure RTT
+        rtt = now - self.handshakeSentTime
+        if WSTunClientProtocol.rtt is None:
+            WSTunClientProtocol.rtt = rtt
+        else:
+            WSTunClientProtocol.rtt = 0.8 * WSTunClientProtocol.rtt + 0.2 * rtt
+
         assert not self._pushToTunTask
         self._pushToTunTask = async_(self._pushToTunnelLoop())
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
@@ -269,7 +281,8 @@ def gen_log_view_page():
         return makeHttpResp(txt, type_='text/plain')
     else:
         return makeHttpResp(logViewTemplate.render(version=__version__,
-                                                   logs=tuple(reversed(InMemoryLogHandler.logs))))
+                                                   logs=tuple(reversed(InMemoryLogHandler.logs)),
+                                                   rtt=WSTunClientProtocol.rtt))
 
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
