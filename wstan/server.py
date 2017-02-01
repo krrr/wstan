@@ -3,7 +3,7 @@ import socket
 import base64
 import time
 from collections import defaultdict
-from asyncio import coroutine, async_, open_connection, wait_for, sleep
+from asyncio import coroutine, async_, open_connection, sleep
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
@@ -24,7 +24,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         RelayMixin.__init__(self)
         self.clientInfo = None
         self.connectTargetTask = None
-        self._dataToTarget = b''
+        self._dataToTarget = bytearray()
 
     def onConnect(self, request):
         self.clientInfo = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))
@@ -97,7 +97,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             writer.write(data)
         if self._dataToTarget:
             writer.write(self._dataToTarget)
-            self._dataToTarget = None
+            self._dataToTarget.clear()
         self.connectTargetTask = None
 
     # next 2 overrides deal with a implicit state which exists only in wstan server: CONNECTING
@@ -108,6 +108,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def resetTunnel(self, reason=''):
         if self.connectTargetTask:
             self.connectTargetTask = None
+            self._dataToTarget.clear()
             self.sendMessage(self.makeResetMessage(reason), True)
             self.tunState = self.TUN_STATE_RESETTING
         else:
@@ -118,6 +119,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             self.sendMessage(self.makeResetMessage(), True)
             self.connectTargetTask.cancel()
             self.connectTargetTask = None
+            self._dataToTarget.clear()
             self.succeedReset()
         else:
             super().onResetTunnel()
@@ -186,7 +188,7 @@ def clean_seen_nonce():
 
 def silent_timeout_err_handler(loop_, context):
     """Prevent asyncio from logging annoying TimeoutError."""
-    if not isinstance(context['exception'], TimeoutError):
+    if 'exception' in context and not isinstance(context['exception'], TimeoutError):
         loop_.default_exception_handler(context)
 
 
