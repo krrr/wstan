@@ -431,6 +431,7 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
+factory.closeHandshakeTimeout = 10
 if not factory.path.endswith('/'):
     factory.path += '/'
 

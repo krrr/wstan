@@ -198,6 +198,7 @@ factory.server = ''  # hide Server field of handshake HTTP header
 factory.autoPingInterval = 400  # only used to clear half-open connections
 factory.autoPingTimeout = 30
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
+factory.closeHandshakeTimeout = 10
 
 
 def main():
