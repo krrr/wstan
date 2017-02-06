@@ -375,12 +375,13 @@ def socks5_tcp_handler(dat, reader, writer):
     # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
     try:
-        dat = yield from wait_for(reader.read(2048), 0.01)
+        dat = yield from wait_for(reader.read(2048), 0.02)
         if not dat:
             return writer.close()
     except asyncio.TimeoutError:
-        # 10ms passed and no data received, rare but legal behavior.
-        # 10ms extra delay for the rare situation can be avoided, but not worthwhile
+        # 20ms passed and no data received, rare but legal behavior.
+        # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
+        # 20ms extra delay for the rare situation can be avoided, but not worthwhile
         # e.g. Old SSH client will wait for server after conn established
         dat = None
 
