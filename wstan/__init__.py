@@ -27,6 +27,7 @@ import sys
 import os
 import re
 from binascii import Error as Base64Error
+from configparser import ConfigParser, ParsingError
 from collections import deque
 
 __version__ = '0.3.1'
@@ -116,6 +117,29 @@ def die(reason):
     sys.exit(1)
 
 
+def load_ini(ini_path):
+    """Read config from ini file."""
+    ini = ConfigParser()
+    try:
+        # utf-8 with BOM will kill ConfigParser
+        with open(ini_path, encoding='utf-8-sig') as f:
+            ini.read_string('[DEFAULT]\n' + f.read())
+    except (ParsingError, FileNotFoundError) as e:
+        die('error reading config file: %s' % e)
+    ini = ini['DEFAULT']
+
+    ret = {}
+    ret.update(ini)
+    # fix types
+    for i in ('port', 'tun-port'):
+        if i in ini:
+            ret[i] = ini.getint(i)
+    for i in ('client', 'server', 'debug', 'compatible'):
+        if i in ini:
+            ret[i] = ini.getboolean(i)
+    return ret.items()
+
+
 def load_config():
     import argparse
     from wstan.autobahn.websocket.protocol import parseWsUrl
@@ -132,6 +156,7 @@ def load_config():
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
+    parser.add_argument('-i', '--ini', help='load config file')
     # client config
     parser.add_argument('-y', '--proxy', help='let client use a HTTPS proxy (host:port)')
     parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
@@ -144,8 +169,14 @@ def load_config():
         sys.exit(1)
 
     args = parser.parse_args()
+
     if args.gen_key:  # option -g can be used without URI and key, just like -h
         return args
+
+    if args.ini:
+        for k, v in load_ini(args.ini):
+            setattr(args, k, v)  # file config will override args
+
     for i in ['uri', 'key']:
         if not getattr(args, i):
             die('%s not specified' % i)
@@ -215,7 +246,7 @@ def main_entry():
 
     global config, loop
     config = load_config()
-    
+
     if config.gen_key:
         return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())
 
