@@ -3,7 +3,7 @@ import logging
 import time
 import os
 import base64
-from asyncio import coroutine, async_, wait_for, Future, sleep
+from asyncio import coroutine, async_, wait_for, Future, sleep, CancelledError
 from collections import deque
 from urllib import parse as urlparse
 from wstan.autobahn.util import makeHttpResp
@@ -78,6 +78,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     POOL_NOM_SIZE = round(POOL_MAX_SIZE / 2)
+    MAX_RETRY_COUNT = 5
     TUN_MAX_IDLE_TIMEOUT = 60  # close tunnels in pool on timeout (in seconds)
     TUN_MIN_IDLE_TIMEOUT = round(TUN_MAX_IDLE_TIMEOUT / 2)  # used when len(pool) > POOL_NOM_SIZE
     # Tunnels in-use also need auto-ping. If another end dead when resetting,
@@ -94,6 +95,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         CustomWSClientProtocol.__init__(self)
         RelayMixin.__init__(self)
         self.lastIdleTime = None
+        self.retryCount = 0
         self.checkTimeoutTask = None
         self.inPool = False
         self.canReturnErrorPage = False
@@ -172,12 +174,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onClose(self, *args):
         if not self.tunOpen.done():
-            # sometimes reason can be None in extremely poor network
-            msg = self.wasNotCleanReason or ''
-            msg = translate_err_msg(msg)
-            logging.error("can't connect to server: %s" % msg)
-            if self.wasNotCleanReason and self.canReturnErrorPage:  # write before closing writer
-                self._writer.write(gen_error_page("can't connect to wstan server", msg))
+            self._writer = None  # prevent it from being closed, startProxy will close it
             RelayMixin.onClose(self, *args, logWarn=False)
             self.tunOpen.cancel()
         else:
@@ -213,12 +210,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @coroutine
-    def startProxy(cls, addrHeader, dat, reader, writer):
+    def startProxy(cls, addrHeader, dat, reader, writer, retryCount=0):
         if not dat:
             logging.debug('startProxy with no data')
         canErr = can_return_error_page(dat)
 
-        if cls.pool:
+        if cls.pool:  # reuse from pool
             logging.debug('reuse tunnel from pool (total %s)' % len(cls.pool))
             tun = cls.pool[0]
             tun.checkTimeoutTask.cancel()
@@ -228,30 +225,54 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.canReturnErrorPage = canErr
             tun.setProxy(reader, writer)
             tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
-        else:
-            try:
-                sock = None
-                if config.proxy:
-                    sock = yield from setup_http_tunnel()
+            return
 
-                tun = (yield from loop.create_connection(
-                    factory, None if sock else config.uri_addr, None if sock else config.uri_port,
-                    server_hostname=config.uri_addr if config.tun_ssl else None,
-                    sock=sock, ssl=config.tun_ssl))[1]
-                # Lower latency by sending relay header and data in ws handshake
-                tun.customUriPath = factory.path + base64.urlsafe_b64encode(
-                        tun.makeRelayHeader(addrHeader, dat)).decode()
-                tun.canReturnErrorPage = canErr
-                tun.setProxy(reader, writer, startPushLoop=False)
-                async_(tun.restartHandshake())
-                # Data may arrive before setProxy if wait for onOpen here
-                # and then set proxy.
-            except Exception as e:
-                msg = translate_err_msg(str(e))
-                logging.error("can't connect to server: %s" % msg)
-                if canErr:
-                    writer.write(gen_error_page("can't connect to wstan server", msg))
-                return writer.close()
+        # new tunnel
+        try:
+            if retryCount >= cls.MAX_RETRY_COUNT:
+                raise ConnectionResetError('run into tcp reset, all retries failed')
+
+            sock = None
+            if config.proxy:
+                sock = yield from setup_http_tunnel()
+
+            tun = (yield from loop.create_connection(
+                factory, None if sock else config.uri_addr, None if sock else config.uri_port,
+                server_hostname=config.uri_addr if config.tun_ssl else None,
+                sock=sock, ssl=config.tun_ssl))[1]
+            # Lower latency by sending relay header and data in ws handshake
+            tun.customUriPath = factory.path + base64.urlsafe_b64encode(
+                    tun.makeRelayHeader(addrHeader, dat)).decode()
+            tun.canReturnErrorPage = canErr
+            tun.setProxy(reader, writer, startPushLoop=False)  # push loop will start in onOpen
+            async_(tun.restartHandshake())
+            # Data may arrive before setProxy if wait for tunOpen here
+            # and then set proxy.
+        except Exception as e:
+            msg = translate_err_msg(str(e))
+            logging.error("can't connect to server: %s" % msg)
+            if canErr:
+                writer.write(gen_error_page("can't connect to wstan server", msg))
+            return writer.close()
+
+        try:
+            yield from wait_for(tun.tunOpen, None)
+        except CancelledError:
+            # sometimes reason can be None in extremely poor network
+            msg = tun.wasNotCleanReason or ''
+
+            if isinstance(tun.connLostReason, ConnectionResetError):
+                # GFW random reset HTTP stream it can't recognize, just retry
+                return async_(cls.startProxy(addrHeader, dat, reader, writer, retryCount+1))
+
+            msg = translate_err_msg(msg)
+            logging.error("can't connect to server: %s" % msg)
+            if tun.wasNotCleanReason and tun.canReturnErrorPage:  # write before closing writer
+                writer.write(gen_error_page("can't connect to wstan server", msg))
+            return writer.close()
+
+        if retryCount > 0:
+            logging.debug('tcp reset happen, retried %d times' % retryCount)
 
 
 def translate_err_msg(msg):

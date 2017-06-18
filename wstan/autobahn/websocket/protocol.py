@@ -1007,6 +1007,8 @@ class WebSocketProtocol(object):
         # When self.wasClean = False, the reason (what happened)
         self.wasNotCleanReason = None
 
+        self.connLostReason = None
+
         # When we are a client, and we expected the server to drop the TCP, but that
         # didn't happen in time, this gets True
         self.wasServerConnectionDropTimeout = False
@@ -1058,6 +1060,7 @@ class WebSocketProtocol(object):
         # cancel any server connection drop timer if present
         #
         if reason is not None:
+            self.connLostReason = reason
             self.log.debug('_connectionLost: %s' % reason)
         if not self.factory.isServer and self.serverConnectionDropTimeoutCall is not None:
             if self.debugCodePaths:
