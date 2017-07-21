@@ -174,7 +174,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onClose(self, *args):
         if not self.tunOpen.done():
-            self._writer = None  # prevent it from being closed, startProxy will close it
+            self._writer = None  # prevent it from being closed, openTunnel will close it
             RelayMixin.onClose(self, *args, logWarn=False)
             self.tunOpen.cancel()
         else:
@@ -210,9 +210,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @coroutine
-    def startProxy(cls, addrHeader, dat, reader, writer, retryCount=0):
+    def openTunnel(cls, addrHeader, dat, reader, writer, retryCount=0):
         if not dat:
-            logging.debug('startProxy with no data')
+            logging.debug('openTunnel with no data')
         canErr = can_return_error_page(dat)
 
         if cls.pool:  # reuse from pool
@@ -263,7 +263,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             if isinstance(tun.connLostReason, ConnectionResetError):
                 # GFW random reset HTTP stream it can't recognize, just retry
-                return async_(cls.startProxy(addrHeader, dat, reader, writer, retryCount+1))
+                return async_(cls.openTunnel(addrHeader, dat, reader, writer, retryCount + 1))
 
             msg = translate_err_msg(msg)
             logging.error("can't connect to server: %s" % msg)
@@ -368,7 +368,7 @@ def http_proxy_handler(dat, reader, writer):
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
     logging.info('requesting %s:%d' % (host.decode(), port))
-    async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
+    async_(WSTunClientProtocol.openTunnel(addr_header, dat, reader, writer))
 
 
 @coroutine
@@ -407,7 +407,7 @@ def socks5_tcp_handler(dat, reader, writer):
         dat = None
 
     logging.info('requesting %s:%d' % (target_addr, target_port))
-    async_(WSTunClientProtocol.startProxy(addr_header, dat, reader, writer))
+    async_(WSTunClientProtocol.openTunnel(addr_header, dat, reader, writer))
 
 
 @coroutine
@@ -456,7 +456,7 @@ try:
     import jinja2
     import pkg_resources
 except ImportError:
-    logViewTemplate = None  # fallback to plain text version
+    logViewTemplate = jinja2 = pkg_resources = None  # fallback to plain text version
 else:
     logViewTemplate = jinja2.Template(
         pkg_resources.resource_string(__package__, 'logview.html').decode('utf-8'))
@@ -466,7 +466,7 @@ factory = WebSocketClientFactory(config.uri)
 factory.protocol = WSTunClientProtocol
 factory.useragent = ''
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before finishing WS handshake
-factory.closeHandshakeTimeout = 10
+factory.closeHandshakeTimeout = factory.serverConnectionDropTimeout = 4
 if not factory.path.endswith('/'):
     factory.path += '/'
 
