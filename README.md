@@ -30,15 +30,18 @@ optional arguments:
                         server)
   -s, --server          run as server
   -d, --debug
+  -z, --compatible      useful when server is behind WS proxy
+  -i INI, --ini INI     load config file
   -y PROXY, --proxy PROXY
                         let client use a HTTPS proxy (host:port)
-  -z, --compatible      useful when server is behind WS proxy
   -p PORT, --port PORT  listen port of SOCKS5/HTTP(S) server at localhost
                         (defaults 1080)
   -t TUN_ADDR, --tun-addr TUN_ADDR
                         listen address of server, overrides URI
   -r TUN_PORT, --tun-port TUN_PORT
                         listen port of server, overrides URI
+  --x-forward           Use X-Forwarded-For as client IP address when behind
+                        proxy
 ```
 
 Example:
