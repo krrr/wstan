@@ -131,8 +131,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         else:
             WSTunClientProtocol.rtt = 0.8 * WSTunClientProtocol.rtt + 0.2 * rtt
 
-        assert not self._pushToTunTask
-        self._pushToTunTask = async_(self._pushToTunnelLoop())
+        self.startPushToTunLoop()
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
             self.customUriPath = None  # save memory
@@ -480,8 +479,6 @@ def main():
     print('wstan client -- SOCKS5/HTTP(S) server listening on localhost:%d' % config.port)
     try:
         loop.run_forever()
-    except KeyboardInterrupt:
-        pass
     finally:
         server.close()
         loop.close()

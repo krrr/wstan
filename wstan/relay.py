@@ -5,7 +5,7 @@ import struct
 import hashlib
 import time
 import random
-from asyncio import coroutine, async_, Future
+from asyncio import coroutine, async_, Future, CancelledError
 from asyncio.streams import FlowControlMixin
 from wstan import config, parse_socks_addr
 if not config.tun_ssl:
@@ -19,6 +19,15 @@ TIMESTAMP_LEN = 8  # double
 
 def _get_digest(dat):
     return hmac.new(config.key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
+
+
+def _on_pushToTunTaskDone(task):
+    # suppress annoying "CancelledError exception not retrieved" error on Py3.5+
+    try:
+        if not isinstance(task.exception(), CancelledError):
+            logging.error("pushToTunTask exception: %s" % type(task.exception()))
+    except CancelledError:  # doc says it will raise this if canceled, but...
+        pass
 
 
 class OurFlowControlMixin(FlowControlMixin):
@@ -109,7 +118,7 @@ class RelayMixin(OurFlowControlMixin):
         self.tunState = self.TUN_STATE_USING
         self._reader, self._writer = reader, writer
         if startPushLoop:
-            self._pushToTunTask = async_(self._pushToTunnelLoop())
+            self.startPushToTunLoop()
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""
@@ -129,6 +138,11 @@ class RelayMixin(OurFlowControlMixin):
             dat = bytes([self.CMD_DAT]) + dat
             self.sendMessage(self.encrypt(dat), True)
             yield from self.drain()
+
+    def startPushToTunLoop(self):
+        assert not self._pushToTunTask
+        self._pushToTunTask = async_(self._pushToTunnelLoop())
+        self._pushToTunTask.add_done_callback(_on_pushToTunTaskDone)
 
     def makeResetMessage(self, reason=''):
         dat = bytes([self.CMD_RST]) + (reason or ' ' * random.randrange(2, 8)).encode('utf-8')
