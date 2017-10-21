@@ -30,7 +30,7 @@ from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
 
-__version__ = '0.3.1'
+__version__ = '0.3.2'
 
 # patch asyncio because "async" will become a keyword sooner or later
 asyncio.async_ = getattr(asyncio, 'ensure_future', None) or getattr(asyncio, 'async')
@@ -164,6 +164,8 @@ def load_config():
     # server config
     parser.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')
     parser.add_argument('-r', '--tun-port', help='listen port of server, overrides URI', type=int)
+    parser.add_argument('--x-forward', help='Use X-Forwarded-For as client IP address when behind proxy',
+                        default=False, action='store_true')
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)

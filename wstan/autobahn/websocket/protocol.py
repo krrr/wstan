@@ -51,7 +51,7 @@ import asyncio
 
 from urllib import parse as urlparse
 
-wsschemes = ["ws", "wss"]
+wsschemes = ("ws", "wss")
 urlparse.uses_relative.extend(wsschemes)
 urlparse.uses_netloc.extend(wsschemes)
 urlparse.uses_params.extend(wsschemes)
@@ -521,7 +521,8 @@ class WebSocketProtocol(object):
                            'flashSocketPolicy',
                            'allowedOrigins',
                            'allowedOriginsPatterns',
-                           'maxConnections']
+                           'maxConnections',
+                           'trustXForwardedFor']
     """
     Configuration attributes specific to servers.
     """
@@ -2389,6 +2390,13 @@ class WebSocketServerProtocol(WebSocketProtocol):
             except Exception as e:
                 self.log.warning("can't parse HTTP header: %s" % e)
 
+            # replace self.peer if the x-forwarded-for header is present and trusted
+            #
+            if 'x-forwarded-for' in self.http_headers and self.trustXForwardedFor:
+                addresses = [x.strip() for x in self.http_headers['x-forwarded-for'].split(',')]
+                trusted_addresses = addresses[-self.trustXForwardedFor:]
+                self.peer = trusted_addresses[0]
+
             # validate WebSocket opening handshake client request
             #
             if self.debug:
@@ -3012,6 +3020,9 @@ class WebSocketServerFactory(WebSocketFactory):
         # maximum number of concurrent connections
         self.maxConnections = 0
 
+        # number of trusted web servers in front of this server
+        self.trustXForwardedFor = 0
+
     def setProtocolOptions(self,
                            versions=None,
                            webStatus=None,
@@ -3034,7 +3045,8 @@ class WebSocketServerFactory(WebSocketFactory):
                            serveFlashSocketPolicy=None,
                            flashSocketPolicy=None,
                            allowedOrigins=None,
-                           maxConnections=None):
+                           maxConnections=None,
+                           trustXForwardedFor=None):
         """
         Set WebSocket protocol options used as defaults for new protocol instances.
 
@@ -3160,6 +3172,11 @@ class WebSocketServerFactory(WebSocketFactory):
             assert(type(maxConnections) in (float, int))
             assert(maxConnections >= 0)
             self.maxConnections = maxConnections
+
+        if trustXForwardedFor is not None and trustXForwardedFor != self.trustXForwardedFor:
+            assert(type(trustXForwardedFor) is int)
+            assert(trustXForwardedFor >= 0)
+            self.trustXForwardedFor = trustXForwardedFor
 
     def getConnectionCount(self):
         """

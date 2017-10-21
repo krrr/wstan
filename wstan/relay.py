@@ -24,7 +24,7 @@ def _get_digest(dat):
 def _on_pushToTunTaskDone(task):
     # suppress annoying "CancelledError exception not retrieved" error on Py3.5+
     try:
-        if not isinstance(task.exception(), CancelledError):
+        if isinstance(task.exception(), CancelledError):
             logging.error("pushToTunTask exception: %s" % type(task.exception()))
     except CancelledError:  # doc says it will raise this if canceled, but...
         pass

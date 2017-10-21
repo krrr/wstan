@@ -22,12 +22,10 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     def __init__(self):
         WebSocketServerProtocol.__init__(self)
         RelayMixin.__init__(self)
-        self.clientInfo = None
         self.connectTargetTask = None
         self._dataToTarget = bytearray()
 
     def onConnect(self, request):
-        self.clientInfo = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))
         # ----- init decryptor -----
         if not config.tun_ssl:
             if config.compatible:
@@ -60,14 +58,14 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 raise ValueError('wrong command %s' % cmd)
         except (ValueError, Base64Error) as e:
             logging.error('invalid request: %s (from %s), path: %s' %
-                          (e, self.clientInfo, path))
+                          (e, self.peer, path))
             raise ConnectionDeny(400)
 
         if not config.tun_ssl:
             # filter replay attack
             seen = seenNonceByTime[timestamp // 10]
             if nonce in seen:
-                logging.warning('replay attack detected (from %s)' % self.clientInfo)
+                logging.warning('replay attack detected (from %s)' % self.peer)
                 raise ConnectionDeny(400)
             seen.add(nonce)
 
@@ -86,11 +84,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     @coroutine
     def connectTarget(self, addr, port, data):
-        logging.info('requested %s <--> %s:%s' % (self.clientInfo, addr, port))
+        logging.info('requested %s <--> %s:%s' % (self.peer, addr, port))
         try:
             reader, writer = yield from open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
-            logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.clientInfo))
+            logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.peer))
             return self.resetTunnel(reason="can't connect to target: %s" % e)
         self.setProxy(reader, writer)
         if data:
@@ -127,7 +125,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     @coroutine
     def onMessage(self, dat, isBinary):
         if not isBinary:
-            logging.error('non binary ws message received (from %s)' % self.clientInfo)
+            logging.error('non binary ws message received (from %s)' % self.peer)
             return self.sendClose(3000)
 
         cmd = ord(self.decrypt(dat[:1]))
@@ -135,7 +133,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             try:
                 msg = self.parseResetMessage(dat)
             except ValueError as e:
-                logging.error('invalid reset message: %s (from %s)' % (e, self.clientInfo))
+                logging.error('invalid reset message: %s (from %s)' % (e, self.peer))
                 return self.sendClose(3000)
             if not msg.startswith('  '):
                 logging.info('tunnel abnormal reset: %s' % msg)
@@ -146,7 +144,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                     raise Exception('reset received when not idle')
                 addr, port, remainData, __ = self.parseRelayHeader(dat)
             except Exception as e:
-                logging.error('invalid request in reused tun: %s (from %s)' % (e, self.clientInfo))
+                logging.error('invalid request in reused tun: %s (from %s)' % (e, self.peer))
                 return self.sendClose(3000)
             self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
@@ -158,7 +156,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 return
             self._writer.write(dat)
         else:
-            logging.error('wrong command: %s (from %s)' % (cmd, self.clientInfo))
+            logging.error('wrong command: %s (from %s)' % (cmd, self.peer))
             self.sendClose(3000)
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
@@ -168,8 +166,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         """Logging failed requests."""
         logWarn = True
         if reason and not self.tunOpen.done():
-            peer = '{0}:{1}'.format(*self.transport.get_extra_info('peername'))  # self.clientInfo is None
-            logging.warning(reason + ' (from %s)' % peer)
+            logging.warning(reason + ' (from %s)' % self.peer)
             logWarn = False
 
         RelayMixin.onClose(self, wasClean, code, reason, logWarn=logWarn)
@@ -198,6 +195,7 @@ factory.server = ''  # hide Server field of handshake HTTP header
 factory.autoPingInterval = 400  # only used to clear half-open connections
 factory.autoPingTimeout = 30
 factory.openHandshakeTimeout = 8  # timeout after TCP established and before succeeded WS handshake
+factory.trustXForwardedFor = 1 if config.x_forward else 0
 factory.closeHandshakeTimeout = 4
 
 
