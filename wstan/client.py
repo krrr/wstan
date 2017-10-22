@@ -249,7 +249,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             # and then set proxy.
         except Exception as e:
             msg = translate_err_msg(str(e))
-            logging.error("can't connect to server: %s" % msg)
+            logging.error("can't connect to %s: %s" %
+                          ('proxy' if config.proxy and not sock else 'server', msg))
             if canErr:
                 writer.write(gen_error_page("can't connect to wstan server", msg))
             return writer.close()
