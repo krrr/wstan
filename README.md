@@ -3,13 +3,15 @@
 [![PyPI](https://img.shields.io/pypi/pyversions/wstan.svg)](https://pypi.python.org/pypi/wstan)
 
 Tunneling TCP connections in WebSocket to circumvent firewall.
-It's light and can run on some PaaS (with SSL support).
+It's light and can run on some PaaS (SSL supported).
+
+`User-Agent(SOCKS5/HTTP) <--> (wstan)Client <-- Internet --> (wstan)Server <--> Target`
 
 ## Features
 * Encryption
-* Proxy support (using HTTP CONNECT; [test your proxy](http://www.websocket.org/echo.html))
+* Proxy support (using HTTP CONNECT; [test yours](http://www.websocket.org/echo.html))
 * Display error message in browser (plain HTTP only)
-* SOCKS v5 and HTTP(S) in the same port (HTTP proxy is slower)
+* SOCKS5 and HTTP (slower) in the same port
 
 WARN: Do not rely it on security when not using SSL
 
@@ -44,19 +46,19 @@ optional arguments:
                         proxy
 ```
 
-Example:
+#### Setup:
 ```sh
 # generate a key using "wstan -g"
 wstan ws://yourserver.com KEY -s  # server
 wstan ws://yourserver.com KEY  # client
-# now a proxy server is listening at localhost:1080 (at client side)
+# a proxy server is listening at localhost:1080 now (at client side)
 ```
 
-Example for OpenShift with SSL:
-```sh
-wstan wss://yours.rhcloud.com:8443 KEY -s -z -t $OPENSHIFT_PYTHON_IP -r $OPENSHIFT_PYTHON_PORT  # server
-wstan wss://yours.rhcloud.com:8443 KEY -z  # client
-```
+#### Setup for OpenShift v3:
+1. [Generate a key](http://rextester.com/TZXL63621)
+2. Pull this [Docker](https://cloud.docker.com/app/krrr/repository/docker/krrr/wstan/general) image and set environment variable `KEY`
+3. Add default route
+4. `http://xxx.openshiftapps.com` will return 200 if everything goes right; Run client `wstan ws://xxx.openshiftapps.com KEY`
 
 ## It's a reinvented wheel
 * [chisel](https://github.com/jpillora/chisel)
