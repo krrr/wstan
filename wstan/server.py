@@ -204,7 +204,8 @@ def main():
     port = config.tun_port or config.uri_port
 
     try:
-        server = loop.run_until_complete(loop.create_server(factory, addr, port))
+        c = loop.create_server_tfo if config.tfo else loop.create_server
+        server = loop.run_until_complete(c(factory, addr, port))
     except OSError:
         die('wstan server failed to bind on %s:%d' % (addr, port))
     so = server.sockets[0]

@@ -22,9 +22,9 @@
     <VCProjectVersion>15.0</VCProjectVersion>
     <ProjectGuid>{F529FAE0-A4BA-4E73-A67B-68ACC8A77169}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>WinAsyncTfo</RootNamespace>
+    <RootNamespace>overlapped</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.15063.0</WindowsTargetPlatformVersion>
-    <ProjectName>WinAsyncTfo</ProjectName>
+    <ProjectName>overlapped</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">

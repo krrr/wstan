@@ -240,7 +240,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 assert not config.proxy and not config.tun_ssl
                 tun.noSendHandshake = True
                 tun.startHandshake()
-                sock = yield from my_sock_connect(config.uri_addr, config.uri_port, tfo=True,
+                sock = yield from my_sock_connect(config.uri_addr, config.uri_port,
                                                   tfo_dat=tun.http_request_data)
                 tun.handshakeSentTime = time.time()
 

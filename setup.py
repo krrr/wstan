@@ -14,7 +14,7 @@ setup(name='wstan',
       packages=find_packages(),
       install_requires=['cryptography'],
       extras_require={'advanced_web_log_viewer': ['jinja2'],
-                      'win10_tcp_fast_open': ['winasynctfo']},
+                      'win10_tcp_fast_open': ['asynctfo']},
       classifiers=[
           'Topic :: Internet :: Proxy Servers',
           'Operating System :: OS Independent',
