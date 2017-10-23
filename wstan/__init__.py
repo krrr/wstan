@@ -79,6 +79,52 @@ _error_page = '''<!DOCTYPE html>
 '''
 
 
+@asyncio.coroutine
+def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, tfo=False, tfo_dat=None):
+    """Similar to sock_connect, with sock object creation, and it resolve names for Py 3.4- capability."""
+    assert (host and port)
+
+    infos = yield from loop.getaddrinfo(
+        host, port, family=family,
+        type=socket.SOCK_STREAM, proto=proto, flags=flags)
+    if not infos:
+        raise OSError('getaddrinfo() returned empty list')
+
+    exceptions = []
+    for family, type_, proto, cname, address in infos:
+        try:
+            sock = socket.socket(family=family, type=type_, proto=proto)
+            sock.setblocking(False)
+            if tfo and tfo_dat:
+                yield from loop.sock_connect_tfo(sock, address, tfo_dat)
+            else:
+                yield from loop.sock_connect(sock, address)
+        except OSError as exc:
+            if sock is not None:
+                sock.close()
+            exceptions.append(exc)
+        except Exception:
+            if sock is not None:
+                sock.close()
+            raise
+        else:
+            break
+    else:
+        if len(exceptions) == 1:
+            raise exceptions[0]
+        else:
+            # If they all have the same str(), raise one.
+            model = str(exceptions[0])
+            if all(str(exc) == model for exc in exceptions):
+                raise exceptions[0]
+            # Raise a combined exception so the user can see all
+            # the various error messages.
+            raise OSError('Multiple exceptions: {}'.format(
+                ', '.join(str(exc) for exc in exceptions)))
+
+    return sock
+
+
 def make_socks_addr(host, port):
     return b'\x00\x03' + bytes([len(host)]) + host + struct.pack('>H', port)
 
@@ -157,6 +203,7 @@ def load_config():
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
     parser.add_argument('-i', '--ini', help='load config file')
+    parser.add_argument('--tfo', default=False, action='store_true', help="TCP Fast Open")
     # client config
     parser.add_argument('-y', '--proxy', help='let client use a HTTPS proxy (host:port)')
     parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
@@ -252,7 +299,22 @@ def main_entry():
     if config.gen_key:
         return print('A fresh random key:', base64.b64encode(os.urandom(16)).decode())
 
-    loop = asyncio.get_event_loop()
+    if sys.platform == 'win32':
+        if config.tfo and (config.proxy or config.tun_ssl):
+            logging.warning('--tfo not work with SSL or proxy')
+        elif config.tfo and not (config.proxy or config.tun_ssl):
+            try:
+                from winasynctfo import ProactorEventLoopWithTfo
+                loop = ProactorEventLoopWithTfo()
+            except Exception as e:
+                logging.warning('--tfo unusable: %s' % e)
+
+        if not loop:
+            loop = asyncio.ProactorEventLoop()
+            config.tfo = False
+        asyncio.set_event_loop(loop)
+    else:
+        loop = asyncio.get_event_loop()
     logging.basicConfig(level=logging.DEBUG if config.debug else logging.INFO,
                         format='%(asctime)s %(levelname).1s: %(message)s',
                         datefmt='%m-%d %H:%M:%S')
