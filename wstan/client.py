@@ -292,7 +292,7 @@ def translate_err_msg(msg):
     elif (msg.startswith('[Errno 10060] Conn') or
           msg == 'peer did not finish (in time) the opening handshake' or
           msg.startswith('[Errno 110] Connect call failed') or
-          msg.startswith('[Errno 121]')):
+          msg.startswith('[WinError 121]')):
         # failed to establish TCP connection or handshake timeout, because of poor network
         return 'connection timed out'
     elif msg.startswith('[Errno 10061] Conn') or msg.startswith('[Errno 111] Connect call failed'):
@@ -457,6 +457,16 @@ def setup_http_tunnel():
     return sock
 
 
+def silent_tpo_timeout_err_handler(loop_, context):
+    """Prevent asyncio from logging annoying OSError when using TFO."""
+    exc = context.get('exception')
+    if not exc:
+        return
+    if hasattr(exc, 'winerror') and exc.winerror == 121:  # ERROR_SEM_TIMEOUT
+        return
+    loop_.default_exception_handler(context)
+
+
 # load html template (optional) for web log viewer
 try:
     import jinja2
@@ -478,11 +488,15 @@ if not factory.path.endswith('/'):
 
 
 def main():
+    if config.tfo:
+        loop.set_exception_handler(silent_tpo_timeout_err_handler)
+
     try:
         server = loop.run_until_complete(
             asyncio.start_server(dispatch_proxy, 'localhost', config.port))
     except OSError:
         die('wstan client failed to bind on localhost:%d' % config.port)
+
     print('wstan client -- SOCKS5/HTTP(S) server listening on localhost:%d' % config.port)
     try:
         loop.run_forever()
