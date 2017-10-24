@@ -240,8 +240,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 assert not config.proxy and not config.tun_ssl
                 tun.noSendHandshake = True
                 tun.startHandshake()
-                sock = yield from my_sock_connect(config.uri_addr, config.uri_port,
-                                                  tfo_dat=tun.http_request_data)
+                # tfo is meaningless if handshake data can't fit into TCP SYN packet
+                # switch back to normal sock_connect just in case my Windows tfo extension has bug
+                tfoDat = tun.http_request_data if len(tun.http_request_data) <= 1400 else None
+                sock = yield from my_sock_connect(config.uri_addr, config.uri_port, tfo_dat=tfoDat)
+                if tfoDat is None:
+                    loop.sock_sendall(sock, tun.http_request_data)
                 tun.handshakeSentTime = time.time()
 
             yield from loop.create_connection(
@@ -405,7 +409,6 @@ def socks5_tcp_handler(dat, reader, writer):
     except asyncio.TimeoutError:
         # 20ms passed and no data received, rare but legal behavior.
         # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
-        # 20ms extra delay for the rare situation can be avoided, but not worthwhile
         # e.g. Old SSH client will wait for server after conn established
         dat = None
 

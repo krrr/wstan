@@ -180,9 +180,13 @@ def load_ini(ini_path):
     for i in ('port', 'tun-port'):
         if i in ini:
             ret[i] = ini.getint(i)
-    for i in ('client', 'server', 'debug', 'compatible'):
+    for i in ('client', 'server', 'debug', 'compatible', 'tfo'):
         if i in ini:
             ret[i] = ini.getboolean(i)
+
+    for i in ret:
+        if '-' in i:
+            ret[i.replace('-', '_')] = ret.pop(i)
     return ret.items()
 
 
