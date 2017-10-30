@@ -56,7 +56,7 @@ wstan ws://yourserver.com KEY  # client
 
 #### Setup for OpenShift v3:
 1. [Generate a key](http://rextester.com/TZXL63621)
-2. Pull this [Docker](https://cloud.docker.com/app/krrr/repository/docker/krrr/wstan/general) image and set environment variable `KEY`
+2. Pull [Docker image](https://hub.docker.com/r/krrr/wstan/) and set environment variable `KEY`
 3. Add default route
 4. `http://xxx.openshiftapps.com` will return 200 if everything goes right; Run client `wstan ws://xxx.openshiftapps.com KEY`
 
