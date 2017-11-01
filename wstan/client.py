@@ -25,7 +25,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         self.customWsKey = None
         self.http_request_data = None
         self.noSendHandshake = False
-        self.handshakeSentTime = None
+        self.lastPingSentTime = None
 
     def setAutoPing(self, interval, timeout):
         """Set auto-ping interval. Start it if it's not running."""
@@ -33,6 +33,11 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         self.autoPingInterval = interval
         self.autoPingTimeout = timeout
         self.autoPingPendingCall = loop.call_later(interval, self._sendAutoPing)
+
+    def _sendAutoPing(self):
+        super()._sendAutoPing()
+        self.lastPingSentTime = time.time()
+        print(self.lastPingSentTime)
 
     def disableAutoPing(self):
         if self.autoPingPendingCall:
@@ -65,7 +70,6 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
         self.http_request_data = '\r\n'.join(request).encode('utf8') + b'\r\n\r\n'
         if not self.noSendHandshake:
             self.sendData(self.http_request_data)
-            self.handshakeSentTime = time.time()
 
 
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
@@ -114,16 +118,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onOpen(self):
         self.tunOpen.set_result(None)
-        now = time.time()
-        self.lastIdleTime = now
 
-        # measure RTT
-        rtt = now - self.handshakeSentTime
-        if WSTunClientProtocol.rtt is None:
-            WSTunClientProtocol.rtt = rtt
-        else:
-            WSTunClientProtocol.rtt = 0.8 * WSTunClientProtocol.rtt + 0.2 * rtt
-
+        self.lastIdleTime = time.time()
         self.startPushToTunLoop()
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
@@ -164,6 +160,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         else:
             logging.error('wrong command')
 
+    def onPong(self, _):
+        self.updateRtt(time.time() - self.lastPingSentTime)
+        print(time.time() - self.lastPingSentTime)
+
     def onClose(self, *args):
         if not self.tunOpen.done():
             self._writer = None  # prevent it from being closed, openTunnel will close it
@@ -199,6 +199,13 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.inPool = True
             self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
             self.pool.append(self)
+
+    @classmethod
+    def updateRtt(cls, rtt):
+        if cls.rtt is None:
+            cls.rtt = rtt
+        else:
+            cls.rtt = 0.8 * cls.rtt + 0.2 * rtt
 
     @classmethod
     @coroutine
@@ -244,9 +251,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 # switch back to normal sock_connect just in case my Windows tfo extension has bug
                 tfoDat = tun.http_request_data if len(tun.http_request_data) <= 1400 else None
                 sock = yield from my_sock_connect(config.uri_addr, config.uri_port, tfo_dat=tfoDat)
-                if tfoDat is None:
+                # it will return after SYN,ACK received regardless of TFO
+                if not tfoDat:
                     loop.sock_sendall(sock, tun.http_request_data)
-                tun.handshakeSentTime = time.time()
 
             yield from loop.create_connection(
                 lambda: tun, None if sock else config.uri_addr, None if sock else config.uri_port,
