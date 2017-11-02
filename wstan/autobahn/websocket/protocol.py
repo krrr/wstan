@@ -504,7 +504,6 @@ class WebSocketProtocol(object):
                            'echoCloseCodeReason',
                            'openHandshakeTimeout',
                            'closeHandshakeTimeout',
-                           'tcpNoDelay',
                            'autoPingInterval',
                            'autoPingTimeout',
                            'autoPingSize']
@@ -2997,7 +2996,6 @@ class WebSocketServerFactory(WebSocketFactory):
         self.echoCloseCodeReason = False
         self.openHandshakeTimeout = 5
         self.closeHandshakeTimeout = 1
-        self.tcpNoDelay = True
         self.serveFlashSocketPolicy = False
         self.flashSocketPolicy = u'''<cross-domain-policy>
      <allow-access-from domain="*" to-ports="*" />
@@ -3037,7 +3035,6 @@ class WebSocketServerFactory(WebSocketFactory):
                            echoCloseCodeReason=None,
                            openHandshakeTimeout=None,
                            closeHandshakeTimeout=None,
-                           tcpNoDelay=None,
                            perMessageCompressionAccept=None,
                            autoPingInterval=None,
                            autoPingTimeout=None,
@@ -3076,8 +3073,6 @@ class WebSocketServerFactory(WebSocketFactory):
         :type openHandshakeTimeout: float or None
         :param closeHandshakeTimeout: When we expect to receive a closing handshake reply, timeout in seconds (default: `5`).
         :type closeHandshakeTimeout: float or None
-        :param tcpNoDelay: TCP NODELAY ("Nagle") socket option (default: `True`).
-        :type tcpNoDelay: bool or None
         :param perMessageCompressionAccept: Acceptor function for offers.
         :type perMessageCompressionAccept: callable or None
         :param autoPingInterval: Automatically send WebSocket pings every given seconds. When the peer does not respond
@@ -3140,9 +3135,6 @@ class WebSocketServerFactory(WebSocketFactory):
 
         if closeHandshakeTimeout is not None and closeHandshakeTimeout != self.closeHandshakeTimeout:
             self.closeHandshakeTimeout = closeHandshakeTimeout
-
-        if tcpNoDelay is not None and tcpNoDelay != self.tcpNoDelay:
-            self.tcpNoDelay = tcpNoDelay
 
         if perMessageCompressionAccept is not None and perMessageCompressionAccept != self.perMessageCompressionAccept:
             self.perMessageCompressionAccept = perMessageCompressionAccept
@@ -3604,7 +3596,6 @@ class WebSocketClientFactory(WebSocketFactory):
         self.serverConnectionDropTimeout = 1
         self.openHandshakeTimeout = 5
         self.closeHandshakeTimeout = 5
-        self.tcpNoDelay = True
 
         # permessage-XXX extensions
         #
@@ -3631,7 +3622,6 @@ class WebSocketClientFactory(WebSocketFactory):
                            serverConnectionDropTimeout=None,
                            openHandshakeTimeout=None,
                            closeHandshakeTimeout=None,
-                           tcpNoDelay=None,
                            perMessageCompressionOffers=None,
                            perMessageCompressionAccept=None,
                            autoPingInterval=None,
@@ -3665,8 +3655,6 @@ class WebSocketClientFactory(WebSocketFactory):
         :type openHandshakeTimeout: float
         :param closeHandshakeTimeout: When we expect to receive a closing handshake reply, timeout in seconds (default: `1`).
         :type closeHandshakeTimeout: float
-        :param tcpNoDelay: TCP NODELAY ("Nagle"): bool socket option (default: `True`).
-        :type tcpNoDelay: bool
         :param perMessageCompressionOffers: A list of offers to provide to the server for the permessage-compress WebSocket extension. Must be a list of instances of subclass of PerMessageCompressOffer.
         :type perMessageCompressionOffers: list of instance of subclass of PerMessageCompressOffer
         :param perMessageCompressionAccept: Acceptor function for responses.
@@ -3721,9 +3709,6 @@ class WebSocketClientFactory(WebSocketFactory):
 
         if closeHandshakeTimeout is not None and closeHandshakeTimeout != self.closeHandshakeTimeout:
             self.closeHandshakeTimeout = closeHandshakeTimeout
-
-        if tcpNoDelay is not None and tcpNoDelay != self.tcpNoDelay:
-            self.tcpNoDelay = tcpNoDelay
 
         if perMessageCompressionOffers is not None and pickle.dumps(perMessageCompressionOffers) != pickle.dumps(self.perMessageCompressionOffers):
             if type(perMessageCompressionOffers) == list:
