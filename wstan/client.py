@@ -11,7 +11,7 @@ from wstan.autobahn.websocket.protocol import parseHttpHeader
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
-                   gen_error_page, get_sha1, make_socks_addr, http_die_soon, is_http_req,
+                   gen_error_page, get_sha1, http_die_soon, is_http_req,
                    my_sock_connect, InMemoryLogHandler, __version__)
 
 
@@ -37,7 +37,6 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
     def _sendAutoPing(self):
         super()._sendAutoPing()
         self.lastPingSentTime = time.time()
-        print(self.lastPingSentTime)
 
     def disableAutoPing(self):
         if self.autoPingPendingCall:
@@ -139,12 +138,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
         cmd = ord(self.decrypt(dat[:1]))
         if cmd == self.CMD_RST:
-            msg = self.parseResetMessage(dat)
-            if not msg.startswith('  '):
-                logging.info('tunnel abnormal reset: %s' % msg)
+            reason, err = self.parseResetMessage(dat)
+            if reason:
+                err = translate_err_msg(err)
+                logging.info('%s: %s' % (reason, err))
                 if self.canReturnErrorPage:
-                    title, __, reason = msg.partition(':')
-                    self._writer.write(gen_error_page(title, translate_err_msg(reason.strip())))
+                    self._writer.write(gen_error_page(reason, err))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
@@ -162,7 +161,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onPong(self, _):
         self.updateRtt(time.time() - self.lastPingSentTime)
-        print(time.time() - self.lastPingSentTime)
 
     def onClose(self, *args):
         if not self.tunOpen.done():
@@ -209,7 +207,9 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     @classmethod
     @coroutine
-    def openTunnel(cls, addrHeader, dat, reader, writer, retryCount=0):
+    def openTunnel(cls, target, dat, reader, writer, retryCount=0):
+        logging.info('requesting %s:%d' % target)
+
         if not dat:
             logging.debug('openTunnel with no data')
         canErr = can_return_error_page(dat)
@@ -223,7 +223,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.setAutoPing(cls.TUN_AUTO_PING_INTERVAL, cls.TUN_AUTO_PING_TIMEOUT)
             tun.canReturnErrorPage = canErr
             tun.setProxy(reader, writer)
-            tun.sendMessage(tun.makeRelayHeader(addrHeader, dat), True)
+            tun.sendMessage(tun.makeRelayHeader(target, dat), True)
             return
 
         # new tunnel
@@ -238,7 +238,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun = factory()
             # Lower latency by sending relay header and data in ws handshake
             tun.customUriPath = factory.path + base64.urlsafe_b64encode(
-                tun.makeRelayHeader(addrHeader, dat)).decode()
+                tun.makeRelayHeader(target, dat)).decode()
             tun.canReturnErrorPage = canErr
             # Data may arrive before setProxy if wait for tunOpen here and then set proxy.
             tun.setProxy(reader, writer, startPushLoop=False)  # push loop will start in onOpen
@@ -261,10 +261,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 sock=sock, ssl=config.tun_ssl)
         except Exception as e:
             msg = translate_err_msg(str(e))
-            logging.error("can't connect to %s: %s" %
-                          ('proxy' if config.proxy and not sock else 'server', msg))
+            dest = 'proxy' if config.proxy and not sock else 'wstan server'
+            logging.error("can't connect to %s: %s" % (dest, msg))
             if canErr:
-                writer.write(gen_error_page("can't connect to wstan server", msg))
+                writer.write(gen_error_page("can't connect to " + dest, msg))
             return writer.close()
 
         try:
@@ -275,7 +275,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             if isinstance(tun.connLostReason, ConnectionResetError):
                 # GFW random reset HTTP stream it can't recognize, just retry
-                return async_(cls.openTunnel(addrHeader, dat, reader, writer, retryCount + 1))
+                return async_(cls.openTunnel(target, dat, reader, writer, retryCount+1))
 
             msg = translate_err_msg(msg)
             logging.error("can't connect to server: %s" % msg)
@@ -323,6 +323,7 @@ def gen_log_view_page():
 
 @coroutine
 def dispatch_proxy(reader, writer):
+    """Handle requests from User-Agent."""
     dat = yield from reader.read(2048)
     if not dat:
         return writer.close()
@@ -367,12 +368,11 @@ def http_proxy_handler(dat, reader, writer):
     else:
         writer.write(gen_log_view_page())
         return writer.close()
-    addr_header = make_socks_addr(host, port)
 
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
         try:
-            dat = yield from wait_for(reader.read(2048), 0.01)
+            dat = yield from wait_for(reader.read(2048), 0.02)
             if not dat:
                 return writer.close()
         except asyncio.TimeoutError:
@@ -381,8 +381,7 @@ def http_proxy_handler(dat, reader, writer):
         dat = method + b' ' + path + b' ' + ver + rest_dat
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
-    logging.info('requesting %s:%d' % (host.decode(), port))
-    async_(WSTunClientProtocol.openTunnel(addr_header, dat, reader, writer))
+    async_(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
 
 
 @coroutine
@@ -419,8 +418,7 @@ def socks5_tcp_handler(dat, reader, writer):
         # e.g. Old SSH client will wait for server after conn established
         dat = None
 
-    logging.info('requesting %s:%d' % (target_addr, target_port))
-    async_(WSTunClientProtocol.openTunnel(addr_header, dat, reader, writer))
+    async_(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
 
 
 @coroutine

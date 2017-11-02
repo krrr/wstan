@@ -89,7 +89,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             reader, writer = yield from open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
             logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.peer))
-            return self.resetTunnel(reason="can't connect to target: %s" % e)
+            return self.resetTunnel("can't connect to %s:%s" % (addr, port), str(e))
         self.setProxy(reader, writer)
         if data:
             writer.write(data)
@@ -103,18 +103,18 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
     # IDLE --onConnect--> CONNECTING --connectTarget--> USING
     # CONNECTING --RST-received-and-RST-sent--> IDLE
     # CONNECTING --RST-sent--> RESETTING --RST-received--> IDLE
-    def resetTunnel(self, reason=''):
+    def resetTunnel(self, reason='', err=''):
         if self.connectTargetTask:
             self.connectTargetTask = None
             self._dataToTarget.clear()
-            self.sendMessage(self.makeResetMessage(reason), True)
+            self.sendMessage(self._makeResetMessage(reason, err), True)
             self.tunState = self.TUN_STATE_RESETTING
         else:
             super().resetTunnel(reason)
 
     def onResetTunnel(self):
         if self.connectTargetTask:  # received reset before connected to target
-            self.sendMessage(self.makeResetMessage(), True)
+            self.sendMessage(self._makeResetMessage(), True)
             self.connectTargetTask.cancel()
             self.connectTargetTask = None
             self._dataToTarget.clear()
@@ -131,12 +131,12 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         cmd = ord(self.decrypt(dat[:1]))
         if cmd == self.CMD_RST:
             try:
-                msg = self.parseResetMessage(dat)
+                reason, __ = self.parseResetMessage(dat)
             except ValueError as e:
                 logging.error('invalid reset message: %s (from %s)' % (e, self.peer))
                 return self.sendClose(3000)
-            if not msg.startswith('  '):
-                logging.info('tunnel abnormal reset: %s' % msg)
+            if reason:
+                logging.info('tunnel abnormal reset: %s' % reason)
             self.onResetTunnel()
         elif cmd == self.CMD_REQ:
             try:

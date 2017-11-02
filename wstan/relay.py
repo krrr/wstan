@@ -7,7 +7,7 @@ import time
 import random
 from asyncio import coroutine, async_, Future, CancelledError
 from asyncio.streams import FlowControlMixin
-from wstan import config, parse_socks_addr
+from wstan import config, parse_socks_addr, make_socks_addr
 if not config.tun_ssl:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
@@ -95,10 +95,11 @@ class RelayMixin(OurFlowControlMixin):
 
         return addr, port, remain, stamp
 
-    def makeRelayHeader(self, addr_header, remain_data):
+    def makeRelayHeader(self, target, remain_data):
         """Construct relay request header.
         Format: CMD_REQ | timestamp | SOCKS address header | rest data | hmac-sha1 of previous parts
         If encryption enabled then timestamp and parts after it will be encrypted."""
+        addr_header = make_socks_addr(target[0].encode(), target[1])
         dat = struct.pack('>Bd', self.CMD_REQ, time.time()) + addr_header + (remain_data or b'')
         dat = self.encrypt(dat)
         return dat + _get_digest(dat)
@@ -143,9 +144,9 @@ class RelayMixin(OurFlowControlMixin):
         self._pushToTunTask = async_(self._pushToTunnelLoop())
         self._pushToTunTask.add_done_callback(_on_pushToTunTaskDone)
 
-    def makeResetMessage(self, reason=''):
-        dat = bytes([self.CMD_RST]) + (reason or ' ' * random.randrange(2, 8)).encode('utf-8')
-        dat = self.encrypt(dat)
+    def _makeResetMessage(self, reason='', err=''):
+        dat = self.encrypt(bytes([self.CMD_RST]) + (reason+'★'+err).encode('utf-8') +
+                           b' ' * random.randrange(40, 500))
         return dat + _get_digest(dat)
 
     def parseResetMessage(self, dat):
@@ -154,12 +155,13 @@ class RelayMixin(OurFlowControlMixin):
             raise ValueError('incorrect digest length')
         if not hmac.compare_digest(digest, _get_digest(dat[:-DIGEST_LEN])):
             raise ValueError('authentication failed')
-        return self.decrypt(dat[1:-DIGEST_LEN]).decode('utf-8')
+        ret = self.decrypt(dat[1:-DIGEST_LEN]).rstrip().decode('utf-8').split('★')
+        return (ret[0], '') if len(ret) == 1 else ret  # for old version wstan server
 
     def resetTunnel(self, reason=''):
         if self.tunState == self.TUN_STATE_USING:
             logging.debug('resetting tunnel')
-            self.sendMessage(self.makeResetMessage(reason), True)
+            self.sendMessage(self._makeResetMessage(reason), True)
             self._pushToTunTask.cancel()
             self._writer.close()
             self.tunState = self.TUN_STATE_RESETTING
@@ -169,7 +171,7 @@ class RelayMixin(OurFlowControlMixin):
 
     def onResetTunnel(self):
         if self.tunState == self.TUN_STATE_USING:
-            self.sendMessage(self.makeResetMessage(), True)
+            self.sendMessage(self._makeResetMessage(), True)
             self._pushToTunTask.cancel()
             self._writer.close()
             self.succeedReset()
