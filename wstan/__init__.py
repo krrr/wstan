@@ -77,26 +77,27 @@ _error_page = '''<!DOCTYPE html>
 '''
 
 
-@asyncio.coroutine
-def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, tfo_dat=None):
-    """Similar to sock_connect, with sock object creation, and it resolve names for Py 3.4- capability."""
+async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, tfo_dat=None):
+    """Modified version of BaseEventLoop.create_connection: this function returns sock object.
+    And it resolve names for Py 3.4- capability."""
     assert (host and port)
 
-    infos = yield from loop.getaddrinfo(
+    infos = await loop.getaddrinfo(
         host, port, family=family,
         type=socket.SOCK_STREAM, proto=proto, flags=flags)
     if not infos:
         raise OSError('getaddrinfo() returned empty list')
 
     exceptions = []
+    sock = None
     for family, type_, proto, cname, address in infos:
         try:
             sock = socket.socket(family=family, type=type_, proto=proto)
             sock.setblocking(False)
             if tfo_dat:
-                yield from loop.sock_connect_tfo(sock, address, tfo_dat)
+                await loop.sock_connect_tfo(sock, address, tfo_dat)
             else:
-                yield from loop.sock_connect(sock, address)
+                await loop.sock_connect(sock, address)
         except OSError as exc:
             if sock is not None:
                 sock.close()
@@ -111,14 +112,10 @@ def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, tfo_dat
         if len(exceptions) == 1:
             raise exceptions[0]
         else:
-            # If they all have the same str(), raise one.
             model = str(exceptions[0])
-            if all(str(exc) == model for exc in exceptions):
+            if all(str(exc) == model for exc in exceptions):  # If they all have the same str(), raise one.
                 raise exceptions[0]
-            # Raise a combined exception so the user can see all
-            # the various error messages.
-            raise OSError('Multiple exceptions: {}'.format(
-                ', '.join(str(exc) for exc in exceptions)))
+            raise OSError('Multiple exceptions: {}'.format(', '.join(map(str, exceptions))))
 
     return sock
 
@@ -144,7 +141,7 @@ def parse_socks_addr(dat, allow_remain=False):
             port_idx = 18
             target_addr = socket.inet_ntop(socket.AF_INET6, dat[2:port_idx])
         else:
-            raise ValueError
+            raise ValueError("unknown address type")
         target_port = struct.unpack('>H', dat[port_idx:port_idx+2])[0]
         if allow_remain:
             return target_addr, target_port, port_idx + 2
