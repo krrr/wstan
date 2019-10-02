@@ -1,5 +1,5 @@
 FROM python:3.5-slim
-MAINTAINER Yuu Mousou <guogaishiwo@gmail.com>
+MAINTAINER krrr <guogaishiwo@gmail.com>
 
 EXPOSE 8080
 
