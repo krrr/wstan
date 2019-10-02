@@ -1,9 +1,28 @@
+# Copyright (c) 2019 krrr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 import logging
 import socket
 import base64
 import time
 from collections import defaultdict
-from asyncio import coroutine, async_, open_connection, sleep
+from asyncio import ensure_future, open_connection, sleep
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
@@ -80,13 +99,12 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             self.initCipher(encNonce, encryptor=True)
 
         self.tunOpen.set_result(None)
-        self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
+        self.connectTargetTask = ensure_future(self.connectTarget(addr, port, remainData))
 
-    @coroutine
-    def connectTarget(self, addr, port, data):
+    async def connectTarget(self, addr, port, data):
         logging.info('requested %s <--> %s:%s' % (self.peer, addr, port))
         try:
-            reader, writer = yield from open_connection(addr, port)
+            reader, writer = await open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
             logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.peer))
             return self.resetTunnel("can't connect to %s:%s" % (addr, port), str(e))
@@ -122,7 +140,6 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         else:
             super().onResetTunnel()
 
-    @coroutine
     def onMessage(self, dat, isBinary):
         if not isBinary:
             logging.error('non binary ws message received (from %s)' % self.peer)
@@ -146,7 +163,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             except Exception as e:
                 logging.error('invalid request in reused tun: %s (from %s)' % (e, self.peer))
                 return self.sendClose(3000)
-            self.connectTargetTask = async_(self.connectTarget(addr, port, remainData))
+            self.connectTargetTask = ensure_future(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState == self.TUN_STATE_RESETTING:
@@ -172,11 +189,10 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         RelayMixin.onClose(self, wasClean, code, reason, logWarn=logWarn)
 
 
-@coroutine
-def clean_seen_nonce():
+async def clean_seen_nonce():
     # it's unnecessary to clean expired one in time
     while True:
-        yield from sleep(120)
+        await sleep(120)
         expire_time = (time.time() - WSTunServerProtocol.REQ_TTL) // 10
         expired = list(filter(lambda t: t < expire_time, seenNonceByTime.keys()))
         for k in expired:
@@ -215,7 +231,7 @@ def main():
         so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
     loop.set_exception_handler(silent_timeout_err_handler)
-    async_(clean_seen_nonce())
+    ensure_future(clean_seen_nonce())
 
     print('wstan server -- listening on %s:%d' % (addr, port))
     try:

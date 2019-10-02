@@ -1,4 +1,4 @@
-# Copyright (c) 2017 krrr
+# Copyright (c) 2019 krrr
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -32,8 +32,6 @@ from collections import deque
 
 __version__ = '0.4'
 
-# patch asyncio because "async" will become a keyword sooner or later
-asyncio.async_ = getattr(asyncio, 'ensure_future', None) or getattr(asyncio, 'async')
 
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries
 # used are using old style)

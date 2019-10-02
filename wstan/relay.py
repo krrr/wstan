@@ -1,3 +1,22 @@
+# Copyright (c) 2019 krrr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 import logging
 import weakref
 import hmac
@@ -5,7 +24,7 @@ import struct
 import hashlib
 import time
 import random
-from asyncio import coroutine, async_, Future, CancelledError
+from asyncio import ensure_future, Future, CancelledError
 from asyncio.streams import FlowControlMixin
 from wstan import config, parse_socks_addr, make_socks_addr
 if not config.tun_ssl:
@@ -30,10 +49,9 @@ def _on_pushToTunTaskDone(task):
 
 
 class OurFlowControlMixin(FlowControlMixin):
-    @coroutine
-    def drain(self):
+    async def drain(self):
         """Wait for all queued messages to be sent."""
-        yield from self._drain_helper()
+        await self._drain_helper()
 
 
 class RelayMixin(OurFlowControlMixin):
@@ -126,22 +144,21 @@ class RelayMixin(OurFlowControlMixin):
         self._writer = self._reader = self._pushToTunTask = None
         self.tunState = self.TUN_STATE_IDLE
 
-    @coroutine
-    def _pushToTunnelLoop(self):
+    async def _pushToTunnelLoop(self):
         while True:
             try:
-                dat = yield from self._reader.read(self.BUF_SIZE)
+                dat = await self._reader.read(self.BUF_SIZE)
             except ConnectionError:
                 return self.resetTunnel(self.PUSH_TO_TUN_CONN_ERR_MSG)
             if not dat:
                 return self.resetTunnel()
             dat = bytes([self.CMD_DAT]) + dat
             self.sendMessage(self.encrypt(dat), True)
-            yield from self.drain()
+            await self.drain()
 
     def startPushToTunLoop(self):
         assert not self._pushToTunTask
-        self._pushToTunTask = async_(self._pushToTunnelLoop())
+        self._pushToTunTask = ensure_future(self._pushToTunnelLoop())
         self._pushToTunTask.add_done_callback(_on_pushToTunTaskDone)
 
     def _makeResetMessage(self, reason='', err=''):

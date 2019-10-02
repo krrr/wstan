@@ -1,9 +1,28 @@
+# Copyright (c) 2019 krrr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 import asyncio
 import logging
 import time
 import os
 import base64
-from asyncio import coroutine, async_, wait_for, sleep, CancelledError
+from asyncio import wait_for, sleep, ensure_future, CancelledError
 from collections import deque
 from urllib import parse as urlparse
 from wstan.autobahn.util import makeHttpResp
@@ -171,12 +190,11 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             RelayMixin.onClose(self, *args)
         self.tryRemoveFromPool()
 
-    @coroutine
-    def _checkTimeout(self):
+    async def _checkTimeout(self):
         while self.state == self.STATE_OPEN:
             timeout = (self.TUN_MAX_IDLE_TIMEOUT if len(self.pool) <= self.POOL_NOM_SIZE else
                        self.TUN_MIN_IDLE_TIMEOUT)
-            yield from sleep(timeout)
+            await sleep(timeout)
             if (self.tunState == self.TUN_STATE_IDLE and
                (time.time() - self.lastIdleTime) > timeout):
                 self.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
@@ -193,7 +211,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.sendClose(1000)
         else:
             assert not self.checkTimeoutTask
-            self.checkTimeoutTask = async_(self._checkTimeout())
+            self.checkTimeoutTask = ensure_future(self._checkTimeout())
             self.inPool = True
             self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
             self.pool.append(self)
@@ -206,8 +224,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             cls.rtt = 0.8 * cls.rtt + 0.2 * rtt
 
     @classmethod
-    @coroutine
-    def openTunnel(cls, target, dat, reader, writer, retryCount=0):
+    async def openTunnel(cls, target, dat, reader, writer, retryCount=0):
         logging.info('requesting %s:%d' % target)
 
         if not dat:
@@ -233,7 +250,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             sock = None
             if config.proxy:
-                sock = yield from setup_http_tunnel()
+                sock = await setup_http_tunnel()
 
             tun = factory()
             # Lower latency by sending relay header and data in ws handshake
@@ -250,12 +267,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 # tfo is meaningless if handshake data can't fit into TCP SYN packet
                 # switch back to normal sock_connect just in case my Windows tfo extension has bug
                 tfoDat = tun.http_request_data if len(tun.http_request_data) <= 1400 else None
-                sock = yield from my_sock_connect(config.uri_addr, config.uri_port, tfo_dat=tfoDat)
+                sock = await my_sock_connect(config.uri_addr, config.uri_port, tfo_dat=tfoDat)
                 # it will return after SYN,ACK received regardless of TFO
                 if not tfoDat:
                     loop.sock_sendall(sock, tun.http_request_data)
 
-            yield from loop.create_connection(
+            await loop.create_connection(
                 lambda: tun, None if sock else config.uri_addr, None if sock else config.uri_port,
                 server_hostname=config.uri_addr if config.tun_ssl else None,
                 sock=sock, ssl=config.tun_ssl)
@@ -268,14 +285,14 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             return writer.close()
 
         try:
-            yield from wait_for(tun.tunOpen, None)
+            await wait_for(tun.tunOpen, None)
         except CancelledError:
             # sometimes reason can be None in extremely poor network
             msg = tun.wasNotCleanReason or ''
 
             if isinstance(tun.connLostReason, ConnectionResetError):
                 # GFW random reset HTTP stream it can't recognize, just retry
-                return async_(cls.openTunnel(target, dat, reader, writer, retryCount+1))
+                return ensure_future(cls.openTunnel(target, dat, reader, writer, retryCount+1))
 
             msg = translate_err_msg(msg)
             logging.error("can't connect to server: %s" % msg)
@@ -321,10 +338,10 @@ def gen_log_view_page():
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
 
-@coroutine
-def dispatch_proxy(reader, writer):
+
+async def dispatch_proxy(reader, writer):
     """Handle requests from User-Agent."""
-    dat = yield from reader.read(2048)
+    dat = await reader.read(2048)
     if not dat:
         return writer.close()
 
@@ -340,18 +357,17 @@ def dispatch_proxy(reader, writer):
         return writer.close()
 
     try:
-        yield from handler(dat, reader, writer)
+        await handler(dat, reader, writer)
     except ConnectionError:
         writer.close()
 
 
-@coroutine
-def http_proxy_handler(dat, reader, writer):
+async def http_proxy_handler(dat, reader, writer):
     # get request line and header
     while True:  # the line is not likely to be that long
         if b'\r\n\r\n' in dat:
             break
-        r = yield from reader.read(1024)
+        r = await reader.read(1024)
         if not r:
             return writer.close()
         dat += r
@@ -372,7 +388,7 @@ def http_proxy_handler(dat, reader, writer):
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
         try:
-            dat = yield from wait_for(reader.read(2048), 0.02)
+            dat = await wait_for(reader.read(2048), 0.02)
             if not dat:
                 return writer.close()
         except asyncio.TimeoutError:
@@ -381,11 +397,10 @@ def http_proxy_handler(dat, reader, writer):
         dat = method + b' ' + path + b' ' + ver + rest_dat
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
-    async_(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
+    ensure_future(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
 
 
-@coroutine
-def socks5_tcp_handler(dat, reader, writer):
+async def socks5_tcp_handler(dat, reader, writer):
     # handle auth method selection
     if len(dat) < 2 or len(dat) != dat[1] + 2:
         logging.warning('bad SOCKS v5 request')
@@ -393,7 +408,7 @@ def socks5_tcp_handler(dat, reader, writer):
     writer.write(b'\x05\x00')  # \x00 == NO AUTHENTICATION REQUIRED
 
     # handle relay request
-    dat = yield from reader.read(262)
+    dat = await reader.read(262)
     try:
         cmd, addr_header = dat[1], dat[2:]
         target_addr, target_port = parse_socks_addr(addr_header)
@@ -409,7 +424,7 @@ def socks5_tcp_handler(dat, reader, writer):
     # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
     try:
-        dat = yield from wait_for(reader.read(2048), 0.02)
+        dat = await wait_for(reader.read(2048), 0.02)
         if not dat:
             return writer.close()
     except asyncio.TimeoutError:
@@ -418,21 +433,20 @@ def socks5_tcp_handler(dat, reader, writer):
         # e.g. Old SSH client will wait for server after conn established
         dat = None
 
-    async_(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
+    ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
 
 
-@coroutine
-def setup_http_tunnel():
-    sock = yield from my_sock_connect(config.proxy_host, config.proxy_port)
+async def setup_http_tunnel():
+    sock = await my_sock_connect(config.proxy_host, config.proxy_port)
     pair = '%s:%d' % (config.uri_addr, config.uri_port)
     req = 'CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n' % (pair, pair)
     loop.sock_sendall(sock, req.encode())
-    dat = yield from loop.sock_recv(sock, 4096)
+    dat = await loop.sock_recv(sock, 4096)
     while True:
         end = dat.find(b'\r\n\r\n')
         if end != -1:
             break
-        r = yield from loop.sock_recv(sock, 4096)
+        r = await loop.sock_recv(sock, 4096)
         if not r:
             return
         dat += r
@@ -449,8 +463,7 @@ def setup_http_tunnel():
     except ValueError:
         raise ConnectionError("bad HTTP status code ('%s')" % sl[1].strip())
     if not (200 <= status_code < 300):
-        # FIXME: handle redirects
-        # FIXME: handle authentication required
+        # real proxy may redirects or require authentication, not supported here
         if len(sl) > 2:
             reason = " - %s" % ''.join(sl[2:])
         else:
