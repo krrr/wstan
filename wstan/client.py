@@ -341,7 +341,10 @@ def gen_log_view_page():
 
 async def dispatch_proxy(reader, writer):
     """Handle requests from User-Agent."""
-    dat = await reader.read(2048)
+    try:
+        dat = await reader.read(2048)
+    except ConnectionError:
+        return writer.close()
     if not dat:
         return writer.close()
 
@@ -371,6 +374,7 @@ async def http_proxy_handler(dat, reader, writer):
         if not r:
             return writer.close()
         dat += r
+
     rl_end = dat.find(b'\r\n')
     req_line, rest_dat = dat[:rl_end], dat[rl_end:]
 
