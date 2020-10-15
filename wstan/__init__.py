@@ -30,7 +30,7 @@ from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
 
-__version__ = '0.4'
+__version__ = '0.4.1'
 
 
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries
