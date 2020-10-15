@@ -260,18 +260,6 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             # Data may arrive before setProxy if wait for tunOpen here and then set proxy.
             tun.setProxy(reader, writer, startPushLoop=False)  # push loop will start in onOpen
 
-            if config.tfo:
-                assert not config.proxy and not config.tun_ssl
-                tun.noSendHandshake = True
-                tun.startHandshake()
-                # tfo is meaningless if handshake data can't fit into TCP SYN packet
-                # switch back to normal sock_connect just in case my Windows tfo extension has bug
-                tfoDat = tun.http_request_data if len(tun.http_request_data) <= 1400 else None
-                sock = await my_sock_connect(config.uri_addr, config.uri_port, tfo_dat=tfoDat)
-                # it will return after SYN,ACK received regardless of TFO
-                if not tfoDat:
-                    loop.sock_sendall(sock, tun.http_request_data)
-
             await loop.create_connection(
                 lambda: tun, None if sock else config.uri_addr, None if sock else config.uri_port,
                 server_hostname=config.uri_addr if config.tun_ssl else None,
@@ -479,16 +467,6 @@ async def setup_http_tunnel():
     return sock
 
 
-def silent_tpo_timeout_err_handler(loop_, context):
-    """Prevent asyncio from logging annoying OSError when using TFO."""
-    exc = context.get('exception')
-    if not exc:
-        return
-    if hasattr(exc, 'winerror') and exc.winerror == 121:  # ERROR_SEM_TIMEOUT
-        return
-    loop_.default_exception_handler(context)
-
-
 # load html template (optional) for web log viewer
 try:
     import jinja2
@@ -510,9 +488,6 @@ if not factory.path.endswith('/'):
 
 
 def main():
-    if config.tfo:
-        loop.set_exception_handler(silent_tpo_timeout_err_handler)
-
     try:
         server = loop.run_until_complete(
             asyncio.start_server(dispatch_proxy, 'localhost', config.port))

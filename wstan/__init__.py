@@ -77,7 +77,7 @@ _error_page = '''<!DOCTYPE html>
 '''
 
 
-async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, tfo_dat=None):
+async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0):
     """Modified version of BaseEventLoop.create_connection: this function returns sock object.
     And it resolve names for Py 3.4- capability."""
     assert (host and port)
@@ -94,10 +94,7 @@ async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0, t
         try:
             sock = socket.socket(family=family, type=type_, proto=proto)
             sock.setblocking(False)
-            if tfo_dat:
-                await loop.sock_connect_tfo(sock, address, tfo_dat)
-            else:
-                await loop.sock_connect(sock, address)
+            await loop.sock_connect(sock, address)
         except OSError as exc:
             if sock is not None:
                 sock.close()
@@ -175,7 +172,7 @@ def load_ini(ini_path):
     for i in ('port', 'tun-port'):
         if i in ini:
             ret[i] = ini.getint(i)
-    for i in ('client', 'server', 'debug', 'compatible', 'tfo'):
+    for i in ('client', 'server', 'debug', 'compatible'):
         if i in ini:
             ret[i] = ini.getboolean(i)
 
@@ -202,7 +199,6 @@ def load_config():
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
     parser.add_argument('-i', '--ini', help='load config file')
-    parser.add_argument('--tfo', default=False, action='store_true', help="TCP Fast Open")
     # client config
     parser.add_argument('-y', '--proxy', help='let client use a HTTPS proxy (host:port)')
     parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
@@ -281,19 +277,6 @@ def get_sha1(dat):
     return sha1.digest()
 
 
-def _setup_event_loop():
-    if config.tfo and (config.proxy or config.tun_ssl):
-        raise RuntimeError('--tfo not work with SSL or proxy')
-    if config.tfo and config.server and sys.platform == 'win32':
-        raise RuntimeError('--tfo not work with wstan server on Windows')
-
-    if config.tfo:
-        from asynctfo import TfoEventLoop
-        return TfoEventLoop()
-
-    return asyncio.get_event_loop()
-
-
 class InMemoryLogHandler(logging.Handler):
     logs = deque(maxlen=200)
 
@@ -316,10 +299,9 @@ def main_entry():
                         datefmt='%m-%d %H:%M:%S')
 
     try:
-        loop = _setup_event_loop()
+        loop = asyncio.get_event_loop()
     except Exception as e:
-        logging.warning('--tfo failed: ' + str(e) if config.tfo else e)
-        config.tfo = False  # must have failed
+        logging.warning(e)
         loop = asyncio.get_event_loop()
     asyncio.set_event_loop(loop)
 
