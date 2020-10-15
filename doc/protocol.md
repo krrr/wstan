@@ -1,4 +1,4 @@
-wstan protocal is based on WebSocket, and every WS message is binary.
+wstan protocol is based on WebSocket, and every WS message is binary.
 
 `User-Agent <--SOCKS5/HTTP--> (wstan)Client <--this protocol--> (wstan)Server <---> Target`
 

@@ -33,7 +33,6 @@ import math
 
 
 __all__ = ("newid",
-           "rtime",
            "Stopwatch")
 
 
@@ -59,33 +58,6 @@ def newid(length=16):
     return base64.b64encode(os.urandom(l))[:length].decode('ascii')
 
 
-# Select the most precise walltime measurement function available
-# on the platform
-#
-if sys.platform.startswith('win'):
-    # On Windows, this function returns wall-clock seconds elapsed since the
-    # first call to this function, as a floating point number, based on the
-    # Win32 function QueryPerformanceCounter(). The resolution is typically
-    # better than one microsecond
-    _rtime = time.clock
-    _ = _rtime()  # this starts wallclock
-else:
-    # On Unix-like platforms, this used the first available from this list:
-    # (1) gettimeofday() -- resolution in microseconds
-    # (2) ftime() -- resolution in milliseconds
-    # (3) time() -- resolution in seconds
-    _rtime = time.time
-
-
-rtime = _rtime
-"""
-Precise wallclock time.
-
-:returns: The current wallclock in seconds. Returned values are only guaranteed
-   to be meaningful relative to each other.
-:rtype: float
-"""
-
 
 class Stopwatch(object):
     """
@@ -103,7 +75,7 @@ class Stopwatch(object):
         """
         self._elapsed = 0
         if start:
-            self._started = rtime()
+            self._started = time.perf_counter()
             self._running = True
         else:
             self._started = None
@@ -117,7 +89,7 @@ class Stopwatch(object):
         :rtype: float
         """
         if self._running:
-            now = rtime()
+            now = time.perf_counter()
             return self._elapsed + (now - self._started)
         else:
             return self._elapsed
@@ -131,7 +103,7 @@ class Stopwatch(object):
         :rtype: float
         """
         if self._running:
-            now = rtime()
+            now = time.perf_counter()
             self._elapsed += now - self._started
             self._running = False
             return self._elapsed
@@ -147,11 +119,11 @@ class Stopwatch(object):
         :rtype: float
         """
         if not self._running:
-            self._started = rtime()
+            self._started = time.perf_counter()
             self._running = True
             return self._elapsed
         else:
-            now = rtime()
+            now = time.perf_counter()
             return self._elapsed + (now - self._started)
 
     def stop(self):
