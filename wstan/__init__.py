@@ -121,7 +121,7 @@ def make_socks_addr(host, port):
     return b'\x00\x03' + bytes([len(host)]) + host + struct.pack('>H', port)
 
 
-def parse_socks_addr(dat, allow_remain=False):
+def parse_socks5_addr(dat, allow_remain=False):
     """Extract address and port from SOCKS request header (only 4 parts:
     RSV(0x00) | ATYP | DST.ADDR | DST.PORT). The header will be reused in tunnel server."""
     if not dat or dat[0] != 0x00:

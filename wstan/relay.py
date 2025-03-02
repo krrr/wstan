@@ -25,8 +25,8 @@ import hashlib
 import time
 import random
 from asyncio import ensure_future, Future, CancelledError
-from asyncio.streams import FlowControlMixin
-from wstan import config, parse_socks_addr, make_socks_addr
+from asyncio.streams import FlowControlMixin, StreamReader, StreamWriter
+from wstan import config, parse_socks5_addr, make_socks_addr
 if not config.tun_ssl:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
@@ -96,7 +96,7 @@ class RelayMixin(OurFlowControlMixin):
         if err:
             raise ValueError(err + ', decrypted dat: %s' % dat[:self.DAT_LOG_MAX_LEN])
 
-        addr, port, remainIdx = parse_socks_addr(dat[TIMESTAMP_LEN:], allow_remain=True)
+        addr, port, remainIdx = parse_socks5_addr(dat[TIMESTAMP_LEN:], allow_remain=True)
         remain = dat[TIMESTAMP_LEN+remainIdx:]  # remainIdx is relative to addrRest
 
         # If we are using SSL then checking timestamp is meaningless.
@@ -113,7 +113,7 @@ class RelayMixin(OurFlowControlMixin):
 
         return addr, port, remain, stamp
 
-    def makeRelayHeader(self, target, remain_data):
+    def makeRelayHeader(self, target: (str, int), remain_data: bytes):
         """Construct relay request header.
         Format: CMD_REQ | timestamp | SOCKS address header | rest data | hmac-sha1 of previous parts
         If encryption enabled then timestamp and parts after it will be encrypted."""
@@ -132,7 +132,7 @@ class RelayMixin(OurFlowControlMixin):
             dec = cipher.decryptor()
             self.decrypt = lambda dat: dec.update(dat)
 
-    def setProxy(self, reader, writer, startPushLoop=True):
+    def setProxy(self, reader: StreamReader, writer: StreamWriter, startPushLoop=True):
         self.tunState = self.TUN_STATE_USING
         self._reader, self._writer = reader, writer
         if startPushLoop:

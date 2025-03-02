@@ -22,16 +22,21 @@ import logging
 import time
 import os
 import base64
-from asyncio import wait_for, sleep, ensure_future, CancelledError
+import socket
+from asyncio import wait_for, sleep, ensure_future, CancelledError, StreamReader, StreamWriter
 from collections import deque
 from urllib import parse as urlparse
 from wstan.autobahn.util import makeHttpResp
 from wstan.autobahn.websocket.protocol import parseHttpHeader
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import (parse_socks_addr, loop, config, can_return_error_page, die,
+from wstan import (parse_socks5_addr, loop, config, can_return_error_page, die,
                    gen_error_page, get_sha1, http_die_soon, is_http_req,
                    my_sock_connect, InMemoryLogHandler, __version__)
+
+
+EARLY_DATA_LEN = 2048
+EARLY_DATA_TIMEOUT = 0.02  # sec
 
 
 # noinspection PyAttributeOutsideInit
@@ -224,7 +229,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             cls.rtt = 0.8 * cls.rtt + 0.2 * rtt
 
     @classmethod
-    async def openTunnel(cls, target, dat, reader, writer, retryCount=0):
+    async def openTunnel(cls, target: (str, int), dat: bytes, reader: StreamReader, writer: StreamWriter, retryCount=0):
         logging.info('requesting %s:%d' % target)
 
         if not dat:
@@ -326,8 +331,7 @@ def gen_log_view_page():
 # functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
 
-
-async def dispatch_proxy(reader, writer):
+async def dispatch_proxy(reader: StreamReader, writer: StreamWriter):
     """Handle requests from User-Agent."""
     try:
         dat = await reader.read(2048)
@@ -337,8 +341,7 @@ async def dispatch_proxy(reader, writer):
         return writer.close()
 
     if dat[0] == 0x04:
-        logging.warning('unsupported SOCKS v4 request')
-        return writer.close()
+        handler = socks4_tcp_handler
     elif dat[0] == 0x05:
         handler = socks5_tcp_handler
     elif is_http_req(dat):
@@ -353,7 +356,7 @@ async def dispatch_proxy(reader, writer):
         writer.close()
 
 
-async def http_proxy_handler(dat, reader, writer):
+async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
     # get request line and header
     while True:  # the line is not likely to be that long
         if b'\r\n\r\n' in dat:
@@ -392,7 +395,7 @@ async def http_proxy_handler(dat, reader, writer):
     ensure_future(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
 
 
-async def socks5_tcp_handler(dat, reader, writer):
+async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
     # handle auth method selection
     if len(dat) < 2 or len(dat) != dat[1] + 2:
         logging.warning('bad SOCKS v5 request')
@@ -401,9 +404,11 @@ async def socks5_tcp_handler(dat, reader, writer):
 
     # handle relay request
     dat = await reader.read(262)
+    if not len(dat):
+        return writer.close()
     try:
         cmd, addr_header = dat[1], dat[2:]
-        target_addr, target_port = parse_socks_addr(addr_header)
+        target_addr, target_port = parse_socks5_addr(addr_header)
     except (ValueError, IndexError):
         logging.warning('invalid SOCKS v5 relay request')
         return writer.close()
@@ -416,13 +421,56 @@ async def socks5_tcp_handler(dat, reader, writer):
     # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
     writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
     try:
-        dat = await wait_for(reader.read(2048), 0.02)
+        dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
         if not dat:
             return writer.close()
     except asyncio.TimeoutError:
         # 20ms passed and no data received, rare but legal behavior.
         # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
         # e.g. Old SSH client will wait for server after conn established
+        dat = None
+
+    ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
+
+
+async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
+    # Check if the request is valid
+    if len(dat) < 8:
+        logging.warning('bad SOCKS v4 request')
+        return writer.close()
+
+    # Parse SOCKS v4 request
+    try:
+        cmd, port, ip = dat[1], dat[2:4], dat[4:8]
+        if ip[:3] == b'\x00\x00\x00' and ip[3] != 0:  # SOCKS v4a (domain name)
+            domain_end = dat.find(b'\x00', 8)
+            if domain_end == -1:
+                logging.warning('invalid SOCKS v4a request')
+                return writer.close()
+            domain = dat[8:domain_end].decode('ascii')
+            target_addr = domain
+        else:
+            target_addr = socket.inet_ntoa(ip)
+        target_port = int.from_bytes(port, 'big')
+    except Exception:
+        logging.warning('invalid SOCKS v4 request')
+        return writer.close()
+
+    # Only support CONNECT command
+    if cmd != 0x01:  # CONNECT
+        logging.warning('unsupported SOCKS v4 command')
+        writer.write(b'\x00\x5B\x00\x00\x00\x00\x00\x00')  # \x5B == REQUEST_REJECTED
+        return writer.close()
+
+    # Send success response
+    writer.write(b'\x00\x5A\x00\x00\x00\x00\x00\x00')  # \x5A == REQUEST_GRANTED
+
+    # Read additional data if available
+    try:
+        dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
+        if not dat:
+            dat = None
+    except asyncio.TimeoutError:
         dat = None
 
     ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
