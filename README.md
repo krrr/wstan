@@ -36,6 +36,7 @@ optional arguments:
   -i INI, --ini INI     load config file
   -y PROXY, --proxy PROXY
                         let client use a HTTPS proxy (host:port)
+  -a ADDR, --addr ADDR  listen address of SOCKS/HTTP server (defaults localhost)     
   -p PORT, --port PORT  listen port of SOCKS5/HTTP(S) server at localhost
                         (defaults 1080)
   -t TUN_ADDR, --tun-addr TUN_ADDR

@@ -195,15 +195,17 @@ def load_config():
     parser.add_argument('uri', help='URI of server', nargs='?')
     parser.add_argument('key', help='password or generated key', nargs='?')
     g = parser.add_mutually_exclusive_group()
-    g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS5/HTTP(S) server)',
+    g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS/HTTP server)',
                    default=True, action='store_true')
     g.add_argument('-s', '--server', help='run as server', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
     parser.add_argument('-i', '--ini', help='load config file')
     # client config
-    parser.add_argument('-y', '--proxy', help='let client use a HTTPS proxy (host:port)')
-    parser.add_argument('-p', '--port', help='listen port of SOCKS5/HTTP(S) server at localhost (defaults 1080)',
+    parser.add_argument('-y', '--proxy', help='let client use a HTTP proxy (host:port)')
+    parser.add_argument('-a', '--addr', help='listen address of SOCKS/HTTP server (defaults localhost)',
+                        default='localhost')
+    parser.add_argument('-p', '--port', help='listen port of SOCKS/HTTP server (defaults 1080)',
                         type=int, default=1080)
     # server config
     parser.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')

@@ -24,6 +24,7 @@ import os
 import base64
 import socket
 from asyncio import wait_for, sleep, ensure_future, CancelledError, StreamReader, StreamWriter
+from asyncio.exceptions import IncompleteReadError
 from collections import deque
 from urllib import parse as urlparse
 from wstan.autobahn.util import makeHttpResp
@@ -328,43 +329,32 @@ def gen_log_view_page():
                                                    logs=tuple(reversed(InMemoryLogHandler.logs)),
                                                    rtt=WSTunClientProtocol.rtt))
 
-# functions below assume one send cause one recv, because server is at localhost (except HTTP part)
 
-
-async def dispatch_proxy(reader: StreamReader, writer: StreamWriter):
+async def dispatch_request(reader: StreamReader, writer: StreamWriter):
     """Handle requests from User-Agent."""
     try:
-        dat = await reader.read(2048)
-    except ConnectionError:
-        return writer.close()
-    if not dat:
-        return writer.close()
+        dat = await reader.readexactly(2)
 
-    if dat[0] == 0x04:
-        handler = socks4_tcp_handler
-    elif dat[0] == 0x05:
-        handler = socks5_tcp_handler
-    elif is_http_req(dat):
-        handler = http_proxy_handler
-    else:
-        logging.warning('unknown request')
-        return writer.close()
+        if dat[0] == 0x05:
+            handler = socks5_tcp_handler
+        elif dat[0] == 0x05:
+            handler = socks4_tcp_handler
+        else:
+            dat += await reader.readuntil(b' ')  # until space after method
+            if is_http_req(dat):
+                handler = http_proxy_handler
+            else:
+                logging.warning('unknown request')
+                return writer.close()
 
-    try:
         await handler(dat, reader, writer)
-    except ConnectionError:
-        writer.close()
+    except (ConnectionError, IncompleteReadError):
+        return writer.close()
 
 
 async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
     # get request line and header
-    while True:  # the line is not likely to be that long
-        if b'\r\n\r\n' in dat:
-            break
-        r = await reader.read(1024)
-        if not r:
-            return writer.close()
-        dat += r
+    dat += await reader.readuntil(b'\r\n\r\n')
 
     rl_end = dat.find(b'\r\n')
     req_line, rest_dat = dat[:rl_end], dat[rl_end:]
@@ -397,9 +387,7 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
 
 async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
     # handle auth method selection
-    if len(dat) < 2 or len(dat) != dat[1] + 2:
-        logging.warning('bad SOCKS v5 request')
-        return writer.close()
+    dat += await reader.readexactly(dat[1])
     writer.write(b'\x05\x00')  # \x00 == NO AUTHENTICATION REQUIRED
 
     # handle relay request
@@ -434,10 +422,7 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
 
 
 async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
-    # Check if the request is valid
-    if len(dat) < 8:
-        logging.warning('bad SOCKS v4 request')
-        return writer.close()
+    dat += await reader.readexactly(6)
 
     # Parse SOCKS v4 request
     try:
@@ -538,11 +523,11 @@ if not factory.path.endswith('/'):
 def main():
     try:
         server = loop.run_until_complete(
-            asyncio.start_server(dispatch_proxy, 'localhost', config.port))
+            asyncio.start_server(dispatch_request, config.addr, config.port))
     except OSError:
-        die('wstan client failed to bind on localhost:%d' % config.port)
+        die('wstan client failed to bind on %s:%d' % (config.addr, config.port))
 
-    print('wstan client -- SOCKS5/HTTP(S) server listening on localhost:%d' % config.port)
+    print('wstan client -- SOCKS/HTTP server listening on %s:%d' % (config.addr, config.port))
     try:
         loop.run_forever()
     except KeyboardInterrupt:
