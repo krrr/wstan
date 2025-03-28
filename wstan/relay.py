@@ -27,9 +27,8 @@ import random
 from asyncio import ensure_future, Future, CancelledError
 from asyncio.streams import FlowControlMixin, StreamReader, StreamWriter
 from wstan import config, parse_socks5_addr, make_socks_addr
-if not config.tun_ssl:
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 
 
 DIGEST_LEN = 10

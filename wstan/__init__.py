@@ -29,8 +29,9 @@ import re
 from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-__version__ = '0.4.1'
+__version__ = '0.4.2'
 
 
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries
@@ -75,6 +76,7 @@ _error_page = '''<!DOCTYPE html>
   </body>
 </html>
 '''
+KDF_SALT = b'j\xbf \t;\xd5\xc6\xc6vh\x07\xc1\xd6\xb2\x82/'
 
 
 async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0):
@@ -189,9 +191,9 @@ def load_config():
     parser = argparse.ArgumentParser(
         description='Ver %s | Tunneling TCP in WebSocket' % __version__)
     # common config
-    parser.add_argument('-g', '--gen-key', help='generate a key and exit', action='store_true')
+    parser.add_argument('-g', '--gen-key', help='generate a 16 byte base64 key and exit', action='store_true')
     parser.add_argument('uri', help='URI of server', nargs='?')
-    parser.add_argument('key', help='base64 encoded 16-byte key', nargs='?')
+    parser.add_argument('key', help='password or generated key', nargs='?')
     g = parser.add_mutually_exclusive_group()
     g.add_argument('-c', '--client', help='run as client (default, also act as SOCKS5/HTTP(S) server)',
                    default=True, action='store_true')
@@ -232,7 +234,9 @@ def load_config():
         args.key = base64.b64decode(args.key)
         assert len(args.key) == 16
     except (Base64Error, AssertionError):
-        die('invalid key')
+        # derive key from password
+        kdf = Scrypt(salt=KDF_SALT, length=32, n=2**14, r=8, p=1)
+        args.key = kdf.derive(args.key)
 
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     if args.proxy and args.client:

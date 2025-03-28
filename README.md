@@ -23,11 +23,11 @@ wstan [-h] [-g] [-c | -s] [-d] [-z] [-p PORT] [-t TUN_ADDR]
 
 positional arguments:
   uri                   URI of server
-  key                   base64 encoded 16-byte key
+  key                   password or generated key
 
 optional arguments:
   -h, --help            show this help message and exit
-  -g, --gen-key         generate a key and exit
+  -g, --gen-key         generate a 16 byte base64 key and exit
   -c, --client          run as client (default, also act as SOCKS5/HTTP(S)
                         server)
   -s, --server          run as server
