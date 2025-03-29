@@ -98,16 +98,15 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
-    POOL_NOM_SIZE = round(POOL_MAX_SIZE / 2)
     MAX_RETRY_COUNT = 5
-    TUN_MAX_IDLE_TIMEOUT = 120  # close tunnels in pool on timeout (in seconds)
-    TUN_MIN_IDLE_TIMEOUT = round(TUN_MAX_IDLE_TIMEOUT / 2)  # used when len(pool) > POOL_NOM_SIZE
+    TUN_MAX_IDLE_TIMEOUT = 300  # close tunnels in pool on timeout (in seconds)
+    TUN_MIN_IDLE_TIMEOUT = 100
     # Tunnels in-use also need auto-ping. If another end dead when resetting,
     # then those zombie connections will never close?
     TUN_AUTO_PING_INTERVAL = 400
     TUN_AUTO_PING_TIMEOUT = 30
-    POOL_AUTO_PING_INTERVAL = 10  # in-pool connection fail faster
-    POOL_AUTO_PING_TIMEOUT = 6
+    POOL_AUTO_PING_INTERVAL = 18  # in-pool connection fail faster
+    POOL_AUTO_PING_TIMEOUT = 9
     PUSH_TO_TUN_CONN_ERR_MSG = 'connection to user-agent broken'
     rtt = None  # smoothed RTT
     pool = deque()
@@ -198,11 +197,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     async def _checkTimeout(self):
         while self.state == self.STATE_OPEN:
-            timeout = (self.TUN_MAX_IDLE_TIMEOUT if len(self.pool) <= self.POOL_NOM_SIZE else
-                       self.TUN_MIN_IDLE_TIMEOUT)
-            await sleep(timeout)
-            if (self.tunState == self.TUN_STATE_IDLE and
-               (time.time() - self.lastIdleTime) > timeout):
+            # dynamic timeout
+            timeout = self.TUN_MAX_IDLE_TIMEOUT - (len(self.pool) / self.POOL_MAX_SIZE) * (self.TUN_MAX_IDLE_TIMEOUT - self.TUN_MIN_IDLE_TIMEOUT)
+            await sleep(self.TUN_MIN_IDLE_TIMEOUT / 2)
+            if self.tunState == self.TUN_STATE_IDLE and (time.time() - self.lastIdleTime) > timeout:
                 self.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
                 self.sendClose(1000)
 
