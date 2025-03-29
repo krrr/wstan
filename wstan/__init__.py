@@ -26,10 +26,12 @@ import base64
 import sys
 import os
 import re
+import argparse
 from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from wstan.autobahn.websocket.protocol import parseWsUrl
 
 __version__ = '0.4.2'
 
@@ -38,7 +40,8 @@ __version__ = '0.4.2'
 # used are using old style)
 
 # global variables shared between modules
-config = loop = None
+config: argparse.Namespace
+loop: asyncio.AbstractEventLoop
 
 _http_req = re.compile(rb'^(GET|POST|HEAD|CONNECT|OPTIONS|PUT|DELETE|TRACE|PATCH) ')
 _accept_html = re.compile(rb'^Accept:[^\r]*text/html', re.IGNORECASE)
@@ -79,7 +82,7 @@ _error_page = '''<!DOCTYPE html>
 KDF_SALT = b'j\xbf \t;\xd5\xc6\xc6vh\x07\xc1\xd6\xb2\x82/'
 
 
-async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0):
+async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0) -> socket.socket:
     """Modified version of BaseEventLoop.create_connection: this function returns sock object.
     And it resolve names for Py 3.4- capability."""
     assert (host and port)
@@ -185,8 +188,6 @@ def load_ini(ini_path):
 
 
 def load_config():
-    import argparse
-    from wstan.autobahn.websocket.protocol import parseWsUrl
 
     parser = argparse.ArgumentParser(
         description='Ver %s | Tunneling TCP in WebSocket' % __version__)
@@ -233,12 +234,13 @@ def load_config():
         die('URI should not contain query')
 
     try:
-        args.key = base64.b64decode(args.key)
-        assert len(args.key) == 16
+        bin_key = base64.b64decode(args.key)
+        assert len(bin_key) == 16
     except (Base64Error, AssertionError):
         # derive key from password
         kdf = Scrypt(salt=KDF_SALT, length=32, n=2**14, r=8, p=1)
-        args.key = kdf.derive(args.key)
+        bin_key = kdf.derive(args.key.encode())
+    args.bin_key = bin_key
 
     args.tun_ssl, args.uri_addr, args.uri_port = parseWsUrl(args.uri)[:3]
     if args.proxy and args.client:

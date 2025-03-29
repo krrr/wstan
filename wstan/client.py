@@ -36,7 +36,7 @@ from wstan import (parse_socks5_addr, loop, config, can_return_error_page, die,
                    my_sock_connect, InMemoryLogHandler, __version__)
 
 
-EARLY_DATA_LEN = 2048
+EARLY_DATA_LEN = 2048  # copy v2ray's naming, although I used before it.
 EARLY_DATA_TIMEOUT = 0.02  # sec
 
 
@@ -100,7 +100,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     POOL_MAX_SIZE = 16
     POOL_NOM_SIZE = round(POOL_MAX_SIZE / 2)
     MAX_RETRY_COUNT = 5
-    TUN_MAX_IDLE_TIMEOUT = 60  # close tunnels in pool on timeout (in seconds)
+    TUN_MAX_IDLE_TIMEOUT = 120  # close tunnels in pool on timeout (in seconds)
     TUN_MIN_IDLE_TIMEOUT = round(TUN_MAX_IDLE_TIMEOUT / 2)  # used when len(pool) > POOL_NOM_SIZE
     # Tunnels in-use also need auto-ping. If another end dead when resetting,
     # then those zombie connections will never close?
@@ -373,7 +373,7 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
         try:
-            dat = await wait_for(reader.read(2048), 0.02)
+            dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
             if not dat:
                 return writer.close()
         except asyncio.TimeoutError:
@@ -461,11 +461,11 @@ async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
     ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
 
 
-async def setup_http_tunnel():
+async def setup_http_tunnel() -> socket.socket:
     sock = await my_sock_connect(config.proxy_host, config.proxy_port)
     pair = '%s:%d' % (config.uri_addr, config.uri_port)
     req = 'CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n' % (pair, pair)
-    loop.sock_sendall(sock, req.encode())
+    await loop.sock_sendall(sock, req.encode())
     dat = await loop.sock_recv(sock, 4096)
     while True:
         end = dat.find(b'\r\n\r\n')

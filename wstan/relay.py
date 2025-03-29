@@ -36,7 +36,7 @@ TIMESTAMP_LEN = 8  # double
 
 
 def _get_digest(dat):
-    return hmac.new(config.key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
+    return hmac.new(config.bin_key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
 
 
 def _on_pushToTunTaskDone(task):
@@ -123,7 +123,7 @@ class RelayMixin(OurFlowControlMixin):
 
     def initCipher(self, nonce, encryptor=False, decryptor=False):
         assert not (encryptor and decryptor)
-        cipher = Cipher(algorithms.AES(config.key), modes.CTR(nonce), default_backend())
+        cipher = Cipher(algorithms.AES(config.bin_key), modes.CTR(nonce), default_backend())
         if encryptor:
             enc = cipher.encryptor()
             self.encrypt = lambda dat: enc.update(dat)

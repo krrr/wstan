@@ -11,7 +11,7 @@ It's light and can run on some PaaS (SSL supported).
 * Encryption
 * Proxy support (using HTTP CONNECT; [test yours](http://www.websocket.org/echo.html))
 * Display error message in browser (plain HTTP only)
-* SOCKS5 and HTTP (slower) in the same port
+* SOCKSv4/v5 and HTTP (slower) in the same port
 
 WARN: Do not rely it on security when not using SSL
 
