@@ -188,7 +188,6 @@ def load_ini(ini_path):
 
 
 def load_config():
-
     parser = argparse.ArgumentParser(
         description='Ver %s | Tunneling TCP in WebSocket' % __version__)
     # common config
@@ -203,16 +202,22 @@ def load_config():
     parser.add_argument('-z', '--compatible', help='useful when server is behind WS proxy', action='store_true')
     parser.add_argument('-i', '--ini', help='load config file')
     # client config
-    parser.add_argument('-y', '--proxy', help='let client use a HTTP proxy (host:port)')
-    parser.add_argument('-a', '--addr', help='listen address of SOCKS/HTTP server (defaults localhost)',
-                        default='localhost')
-    parser.add_argument('-p', '--port', help='listen port of SOCKS/HTTP server (defaults 1080)',
-                        type=int, default=1080)
+    client_group = parser.add_argument_group('client options')
+    client_group.add_argument('-y', '--proxy', help='use HTTP proxy to connect to wstan server (host:port)')
+    client_group.add_argument('-a', '--addr', help='listen address of SOCKS/HTTP server (defaults localhost)',
+                              default='localhost')
+    client_group.add_argument('-p', '--port', help='listen port of SOCKS/HTTP server (defaults 1080)',
+                              type=int, default=1080)
+    client_group.add_argument('--pool-size', help='max size of connection pool (defaults 16)',
+                              type=int, default=16)
+    client_group.add_argument('--pool-max-idle', help='max idle timeout of connection pool in sec (defaults 300)',
+                              type=int, default=300)
     # server config
-    parser.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')
-    parser.add_argument('-r', '--tun-port', help='listen port of server, overrides URI', type=int)
-    parser.add_argument('--x-forward', help='Use X-Forwarded-For as client IP address when behind proxy',
-                        default=False, action='store_true')
+    server_group = parser.add_argument_group('server options')
+    server_group.add_argument('-t', '--tun-addr', help='listen address of server, overrides URI')
+    server_group.add_argument('-r', '--tun-port', help='listen port of server, overrides URI', type=int)
+    server_group.add_argument('--x-forward', help='use X-Forwarded-For as client IP address when behind proxy',
+                              default=False, action='store_true')
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)

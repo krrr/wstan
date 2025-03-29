@@ -97,10 +97,7 @@ class CustomWSClientProtocol(WebSocketClientProtocol):
 
 
 class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
-    POOL_MAX_SIZE = 16
     MAX_RETRY_COUNT = 5
-    TUN_MAX_IDLE_TIMEOUT = 300  # close tunnels in pool on timeout (in seconds)
-    TUN_MIN_IDLE_TIMEOUT = 100
     # Tunnels in-use also need auto-ping. If another end dead when resetting,
     # then those zombie connections will never close?
     TUN_AUTO_PING_INTERVAL = 400
@@ -119,20 +116,29 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.checkTimeoutTask = None
         self.inPool = False
         self.canReturnErrorPage = False
+        self.poolMaxIdleTimeout = config.pool_max_idle  # close tunnels in pool on timeout (in seconds)
+        self.poolMinIdleTimeout = round(config.pool_max_idle / 3)
+        self.poolSize = config.pool_size
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
         self.customWsKey = base64.b64encode(nonce)  # nonce used to encrypt in base64
 
-    if TUN_MAX_IDLE_TIMEOUT <= 0 or POOL_MAX_SIZE <= 0:
-        def resetTunnel(self, reason=''):
+    def resetTunnel(self, reason=''):
+        if self.poolMaxIdleTimeout <= 0 or self.poolSize <= 0:
             # skip sending reset command, close directly instead
             self.tunState = self.TUN_STATE_RESETTING
             self.sendClose(1000)
+        else:
+            super().resetTunnel(reason)
 
-        def onResetTunnel(self):
+    def onResetTunnel(self):
+        if self.poolMaxIdleTimeout <= 0 or self.poolSize <= 0:
+            # skip sending reset command, close directly instead
             self.tunState = self.TUN_STATE_IDLE
             self.sendClose(1000)
+        else:
+            super().onResetTunnel()
 
     def succeedReset(self):
         super().succeedReset()
@@ -198,8 +204,8 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     async def _checkTimeout(self):
         while self.state == self.STATE_OPEN:
             # dynamic timeout
-            timeout = self.TUN_MAX_IDLE_TIMEOUT - (len(self.pool) / self.POOL_MAX_SIZE) * (self.TUN_MAX_IDLE_TIMEOUT - self.TUN_MIN_IDLE_TIMEOUT)
-            await sleep(self.TUN_MIN_IDLE_TIMEOUT / 2)
+            timeout = self.poolMaxIdleTimeout - (len(self.pool) / self.poolSize) * (self.poolMaxIdleTimeout - self.poolMinIdleTimeout)
+            await sleep(self.poolMinIdleTimeout / 2)
             if self.tunState == self.TUN_STATE_IDLE and (time.time() - self.lastIdleTime) > timeout:
                 self.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
                 self.sendClose(1000)
@@ -211,7 +217,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def addToPool(self):
         assert self.tunState == self.TUN_STATE_IDLE
-        if len(self.pool) >= self.POOL_MAX_SIZE:
+        if len(self.pool) >= self.poolSize:
             self.sendClose(1000)
         else:
             assert not self.checkTimeoutTask

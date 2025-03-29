@@ -17,34 +17,39 @@ WARN: Do not rely it on security when not using SSL
 
 ## Usage
 ```
-wstan [-h] [-g] [-c | -s] [-d] [-z] [-p PORT] [-t TUN_ADDR]
-      [-r TUN_PORT]
-      [uri] [key]
+usage: wstan [-h] [-g] [-c | -s] [-d] [-z] [-i INI] [-y PROXY] [-a ADDR] [-p PORT] [--pool-size POOL_SIZE]
+             [--pool-max-idle POOL_MAX_IDLE] [-t TUN_ADDR] [-r TUN_PORT] [--x-forward]
+             [uri] [key]
 
 positional arguments:
   uri                   URI of server
   key                   password or generated key
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -g, --gen-key         generate a 16 byte base64 key and exit
-  -c, --client          run as client (default, also act as SOCKS5/HTTP(S)
-                        server)
+  -c, --client          run as client (default, also act as SOCKS/HTTP server)
   -s, --server          run as server
   -d, --debug
   -z, --compatible      useful when server is behind WS proxy
   -i INI, --ini INI     load config file
+
+client options:
   -y PROXY, --proxy PROXY
-                        let client use a HTTPS proxy (host:port)
-  -a ADDR, --addr ADDR  listen address of SOCKS/HTTP server (defaults localhost)     
-  -p PORT, --port PORT  listen port of SOCKS5/HTTP(S) server at localhost
-                        (defaults 1080)
+                        use HTTP proxy to connect to wstan server (host:port)
+  -a ADDR, --addr ADDR  listen address of SOCKS/HTTP server (defaults localhost)
+  -p PORT, --port PORT  listen port of SOCKS/HTTP server (defaults 1080)
+  --pool-size POOL_SIZE
+                        max size of connection pool (defaults 16)
+  --pool-max-idle POOL_MAX_IDLE
+                        max idle timeout of connection pool in sec (defaults 300)
+
+server options:
   -t TUN_ADDR, --tun-addr TUN_ADDR
                         listen address of server, overrides URI
   -r TUN_PORT, --tun-port TUN_PORT
                         listen port of server, overrides URI
-  --x-forward           Use X-Forwarded-For as client IP address when behind
-                        proxy
+  --x-forward           use X-Forwarded-For as client IP address when behind proxy
 ```
 
 #### Setup:
