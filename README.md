@@ -5,7 +5,7 @@
 Tunneling TCP connections in WebSocket to circumvent firewall.
 It's light and can run on some PaaS (SSL supported).
 
-`User-Agent(SOCKS5/HTTP) <--> (wstan)Client <-- Internet --> (wstan)Server <--> Target`
+`User-Agent(SOCKS/HTTP) <--> (wstan)Client <-- Internet --> (wstan)Server <--> Target`
 
 ## Features
 * Encryption

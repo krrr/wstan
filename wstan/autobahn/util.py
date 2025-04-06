@@ -152,7 +152,7 @@ def wildcards2patterns(wildcards):
     :returns: Computed regular expressions.
     :rtype: list of obj
     """
-    return [re.compile(wc.replace('.', '\.').replace('*', '.*')) for wc in wildcards]
+    return [re.compile(wc.replace('.', '\\.').replace('*', '.*')) for wc in wildcards]
 
 
 def makeHttpResp(html, type_='text/html'):

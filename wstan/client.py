@@ -1,4 +1,4 @@
-# Copyright (c) 2020 krrr
+# Copyright (c) 2025 krrr
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -31,13 +31,13 @@ from wstan.autobahn.util import makeHttpResp
 from wstan.autobahn.websocket.protocol import parseHttpHeader
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
-from wstan import (parse_socks5_addr, loop, config, can_return_error_page, die,
-                   gen_error_page, get_sha1, http_die_soon, is_http_req,
+from wstan import (parse_socks5_addr, make_socks5_addr, loop, config, can_return_error_page, die,
+                   gen_error_page, get_sha1, http_die_soon, is_http_req, parse_sock5_udp_addr,
                    my_sock_connect, InMemoryLogHandler, __version__)
+from wstan.utils import open_udp_endpoint, UdpReader, UdpWriter, UdpEndpointClosedError
 
-
-EARLY_DATA_LEN = 2048  # copy v2ray's naming, although I used before it.
-EARLY_DATA_TIMEOUT = 0.02  # sec
+INIT_DATA_LEN = 2048
+INIT_DATA_TIMEOUT = 0.03  # sec
 
 
 # noinspection PyAttributeOutsideInit
@@ -149,7 +149,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         self.tunOpen.set_result(None)
 
         self.lastIdleTime = time.time()
-        self.startPushToTunLoop()
+        self.startPushToTunLoop(self._exclusiveReader, self._exclusiveWriter)
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
             self.customUriPath = None  # save memory
@@ -173,7 +173,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 err = translate_err_msg(err)
                 logging.info('%s: %s' % (reason, err))
                 if self.canReturnErrorPage:
-                    self._writer.write(gen_error_page(reason, err))
+                    self._exclusiveWriter.write(gen_error_page(reason, err))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
@@ -185,7 +185,12 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 # Can't just throw away dat, because decryptor need to be updated
                 return
             self.canReturnErrorPage = False
-            self._writer.write(dat)
+            self._exclusiveWriter.write(dat)
+        elif cmd == self.CMD_DGM:
+            dat = self.decrypt(dat[1:])
+            if self.tunState != self.TUN_STATE_USING:
+                return
+            self._exclusiveWriter.write(b'\x00\x00' + dat)  # RSV
         else:
             logging.error('wrong command')
 
@@ -194,14 +199,38 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onClose(self, *args):
         if not self.tunOpen.done():
-            self._writer = None  # prevent it from being closed, openTunnel will close it
+            self._exclusiveWriter = None  # prevent it from being closed, openTunnel will close it
             RelayMixin.onClose(self, *args, logWarn=False)
             self.tunOpen.cancel()
         else:
             RelayMixin.onClose(self, *args)
         self.tryRemoveFromPool()
 
-    async def _checkTimeout(self):
+    def setProxy(self, reader: StreamReader | UdpReader, writer: StreamWriter | UdpWriter, startPushLoop=True):
+        super().setProxy(reader, writer, startPushLoop)
+        self._exclusiveReader = reader
+        self._exclusiveWriter = writer
+
+    async def _pushToTunnelLoopUdp(self, reader: UdpReader, writer: UdpWriter):
+        while True:
+            try:
+                pkt = await reader.read()
+            except CancelledError:
+                break
+            except UdpEndpointClosedError:
+                self.resetTunnel()
+                break
+            if pkt is None:
+                self.resetTunnel()
+                break
+            target_addr, target_port, remain_idx = parse_sock5_udp_addr(pkt.data)
+            dat = self.makeDatagramMessage((target_addr, target_port), pkt.data[remain_idx:])
+            self.sendMessage(dat, True)
+            await self.drain()
+
+        writer.close()
+
+    async def _checkIdleTimeout(self):
         while self.state == self.STATE_OPEN:
             # dynamic timeout
             timeout = self.poolMaxIdleTimeout - (len(self.pool) / self.poolSize) * (self.poolMaxIdleTimeout - self.poolMinIdleTimeout)
@@ -221,7 +250,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.sendClose(1000)
         else:
             assert not self.checkTimeoutTask
-            self.checkTimeoutTask = ensure_future(self._checkTimeout())
+            self.checkTimeoutTask = ensure_future(self._checkIdleTimeout())
             self.inPool = True
             self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
             self.pool.append(self)
@@ -234,12 +263,14 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             cls.rtt = 0.8 * cls.rtt + 0.2 * rtt
 
     @classmethod
-    async def openTunnel(cls, target: (str, int), dat: bytes, reader: StreamReader, writer: StreamWriter, retryCount=0):
-        logging.info('requesting %s:%d' % target)
+    async def openTunnel(cls, target: (str, int), initDat: bytes, reader: StreamReader | UdpReader,
+                         writer: StreamWriter | UdpWriter, retryCount=0):
+        is_udp = isinstance(reader, UdpReader)
+        logging.info('requesting %s:%d %s' % (target[0], target[1], 'udp' if is_udp else ''))
 
-        if not dat:
+        if not initDat:
             logging.debug('openTunnel with no data')
-        canErr = can_return_error_page(dat)
+        canErr = not is_udp and can_return_error_page(initDat)
 
         if cls.pool:  # reuse from pool
             logging.debug('reuse tunnel from pool (total %s)' % len(cls.pool))
@@ -250,7 +281,10 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun.setAutoPing(cls.TUN_AUTO_PING_INTERVAL, cls.TUN_AUTO_PING_TIMEOUT)
             tun.canReturnErrorPage = canErr
             tun.setProxy(reader, writer)
-            tun.sendMessage(tun.makeRelayHeader(target, dat), True)
+            if is_udp:
+                tun.sendMessage(tun.makeDatagramMessage(target, initDat), True)
+            else:
+                tun.sendMessage(tun.makeRelayHeader(target, initDat), True)
             return
 
         # new tunnel
@@ -265,7 +299,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             tun = factory()
             # Lower latency by sending relay header and data in ws handshake
             tun.customUriPath = factory.path + base64.urlsafe_b64encode(
-                tun.makeRelayHeader(target, dat)).decode()
+                tun.makeRelayHeader(target, initDat, is_udp)).decode()
             tun.canReturnErrorPage = canErr
             # Data may arrive before setProxy if wait for tunOpen here and then set proxy.
             tun.setProxy(reader, writer, startPushLoop=False)  # push loop will start in onOpen
@@ -290,7 +324,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             if isinstance(tun.connLostReason, ConnectionResetError):
                 # GFW random reset HTTP stream it can't recognize, just retry
-                return ensure_future(cls.openTunnel(target, dat, reader, writer, retryCount+1))
+                return ensure_future(cls.openTunnel(target, initDat, reader, writer, retryCount + 1))
 
             msg = translate_err_msg(msg)
             logging.error("can't connect to server: %s" % msg)
@@ -377,7 +411,7 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
         try:
-            dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
+            dat = await wait_for(reader.read(INIT_DATA_LEN), INIT_DATA_TIMEOUT)
             if not dat:
                 return writer.close()
         except asyncio.TimeoutError:
@@ -391,38 +425,77 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
 
 async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
     # handle auth method selection
-    dat += await reader.readexactly(dat[1])
+    dat += await reader.readexactly(dat[1])  # auth method count
     writer.write(b'\x05\x00')  # \x00 == NO AUTHENTICATION REQUIRED
 
     # handle relay request
-    dat = await reader.read(262)
-    if not len(dat):
-        return writer.close()
+    dat = await reader.readexactly(5)
+    atyp = dat[3]
+    # no "one send corresponds to one recv" assumption
+    if atyp == 0x01:  # ipv4 4byte
+        dat += await reader.readexactly(4 - 1 + 2)
+    elif atyp == 0x03:  # domain
+        dat += await reader.readexactly(dat[4] + 2)
+    elif atyp == 0x04:  # ipv6 16byte
+        dat += await reader.readexactly(16 - 1 + 2)
+
     try:
         cmd, addr_header = dat[1], dat[2:]
         target_addr, target_port = parse_socks5_addr(addr_header)
     except (ValueError, IndexError):
         logging.warning('invalid SOCKS v5 relay request')
         return writer.close()
-    if cmd != 0x01:  # CONNECT
+
+    if cmd == 0x01:  # CONNECT
+        # Initial Data:
+        # Delay can be lowered (of a round-trip) by accepting request before connected to target.
+        # But SOCKS client can't get real reason when error happens (not a big problem, Firefox always
+        # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
+        # BND.ADDR and BND.PORT should be wstan server's outbound socket, so we have to return a fake value.
+        writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
+        try:
+            init_dat = await wait_for(reader.read(INIT_DATA_LEN), INIT_DATA_TIMEOUT)
+            if not init_dat:
+                return writer.close()
+        except asyncio.TimeoutError:
+            # 20ms passed and no data received, rare but legal behavior.
+            # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
+            # e.g. Old SSH client will wait for server after conn established
+            init_dat = None
+
+        ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), init_dat, reader, writer))
+    elif cmd == 0x03:  # UDP ASSOCIATE
+        # listen for udp packets
+        tcp_socket = writer.get_extra_info('socket')  # udp should use same family as tcp socket
+        udp_reader, udp_writer = await open_udp_endpoint((config.addr, 0), family=tcp_socket.family)
+        udp_port = udp_writer.get_extra_info('socket').getsockname()[1]  # ephemeral port
+        listen_addr = tcp_socket.getsockname()[0]  # exposed address which user-agent is talking to
+        writer.write(b'\x05\x00' + make_socks5_addr(listen_addr, udp_port))  # \x00 == SUCCEEDED
+        logging.debug('start listening udp port %s' % udp_port)
+
+        # initial data, same as TCP. but must wait, because we need to know target address
+        try:
+            pkt = await wait_for(udp_reader.read(), 10)
+        except asyncio.TimeoutError:
+            logging.error('associate success but no udp packet received')
+            udp_writer.close()
+            return writer.close()
+        if pkt is None:
+            return writer.close()
+        udp_writer.set_default_remote_addr(pkt.addr)
+        target_addr, target_port, remain_idx = parse_sock5_udp_addr(pkt.data)
+
+        ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), pkt.data[remain_idx:], udp_reader, udp_writer))
+
+        # user-agent will keep this connection open until finished sending udp packet
+        try:
+            await reader.read()
+        finally:
+            udp_writer.close()
+            return writer.close()
+    else:  # BIND
         writer.write(b'\x05\x07\x00\x01' + b'\x00' * 6)  # \x07 == COMMAND NOT SUPPORTED
         return writer.close()
-
-    # Delay can be lowered (of a round-trip) by accepting request before connected to target.
-    # But SOCKS client can't get real reason when error happens (not a big problem, Firefox always
-    # display connection reset error). Dirty solution: generate a HTML page when a HTTP request failed
-    writer.write(b'\x05\x00\x00\x01' + b'\x01' * 6)  # \x00 == SUCCEEDED
-    try:
-        dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
-        if not dat:
-            return writer.close()
-    except asyncio.TimeoutError:
-        # 20ms passed and no data received, rare but legal behavior.
-        # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
-        # e.g. Old SSH client will wait for server after conn established
-        dat = None
-
-    ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
 
 
 async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
@@ -432,12 +505,8 @@ async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
     try:
         cmd, port, ip = dat[1], dat[2:4], dat[4:8]
         if ip[:3] == b'\x00\x00\x00' and ip[3] != 0:  # SOCKS v4a (domain name)
-            domain_end = dat.find(b'\x00', 8)
-            if domain_end == -1:
-                logging.warning('invalid SOCKS v4a request')
-                return writer.close()
-            domain = dat[8:domain_end].decode('ascii')
-            target_addr = domain
+            dat += await reader.readuntil(b'\x00')
+            target_addr = dat[8:].decode('ascii')
         else:
             target_addr = socket.inet_ntoa(ip)
         target_port = int.from_bytes(port, 'big')
@@ -456,7 +525,7 @@ async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
 
     # Read additional data if available
     try:
-        dat = await wait_for(reader.read(EARLY_DATA_LEN), EARLY_DATA_TIMEOUT)
+        dat = await wait_for(reader.read(INIT_DATA_LEN), INIT_DATA_TIMEOUT)
         if not dat:
             dat = None
     except asyncio.TimeoutError:

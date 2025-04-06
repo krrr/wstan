@@ -1,4 +1,4 @@
-# Copyright (c) 2020 krrr
+# Copyright (c) 2025 krrr
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@ import sys
 import os
 import re
 import argparse
+import ipaddress
 from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
@@ -122,15 +123,27 @@ async def my_sock_connect(host=None, port=None, *, family=0, proto=0, flags=0) -
     return sock
 
 
-def make_socks_addr(host, port):
-    return b'\x00\x03' + bytes([len(host)]) + host + struct.pack('>H', port)
+def make_socks5_addr(host: str, port: int):
+    try:
+        addr = ipaddress.ip_address(host)
+        if isinstance(addr, ipaddress.IPv4Address):
+            atyp = b'\x01'
+            addr = socket.inet_aton(host)
+        else:  # IPv6
+            atyp = b'\x04'
+            addr = socket.inet_pton(socket.AF_INET6, host)
+    except ValueError:
+        atyp = b'\x03'  # domain name
+        addr = host.encode()
+        addr = bytes([len(addr)]) + addr
+    return b'\x00' + atyp + addr + struct.pack('>H', port)
 
 
 def parse_socks5_addr(dat, allow_remain=False):
-    """Extract address and port from SOCKS request header (only 4 parts:
+    """Extract address and port from SOCKS5 request header (only 4 parts:
     RSV(0x00) | ATYP | DST.ADDR | DST.PORT). The header will be reused in tunnel server."""
     if not dat or dat[0] != 0x00:
-        raise ValueError
+        raise ValueError('RSV not 0x00')
     try:
         atyp = dat[1]
         if atyp == 0x01:  # IPv4
@@ -153,6 +166,17 @@ def parse_socks5_addr(dat, allow_remain=False):
             return target_addr, target_port
     except (IndexError, struct.error):
         raise ValueError
+
+
+def parse_sock5_udp_addr(dat):
+    """Extract address and port from SOCKS5 UDP request header. Parts:
+    RSV(0x0000) | FRAG | ATYP | DST.ADDR | DST.PORT. """
+    if not dat or dat[0] != 0x00 or dat[1] != 0x00:
+        raise ValueError('RSV not 0x0000')
+    elif dat[2] != 0x00:
+        raise ValueError("fragment not supported, FRAG must be 0")
+    target_addr, target_port, remain_idx = parse_socks5_addr(dat[2:], True)
+    return target_addr, target_port, remain_idx + 2
 
 
 def die(reason):
@@ -311,11 +335,7 @@ def main_entry():
                         format='%(asctime)s %(levelname).1s: %(message)s',
                         datefmt='%m-%d %H:%M:%S')
 
-    try:
-        loop = asyncio.get_event_loop()
-    except Exception as e:
-        logging.warning(e)
-        loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     if config.client:

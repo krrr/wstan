@@ -1,4 +1,4 @@
-# Copyright (c) 2020 krrr
+# Copyright (c) 2025 krrr
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,12 +22,12 @@ import socket
 import base64
 import time
 from collections import defaultdict
-from asyncio import ensure_future, open_connection, sleep
+from asyncio import create_task, open_connection, sleep, StreamReader, StreamWriter, CancelledError
 from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketServerFactory
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
-from wstan import loop, config, die, get_sha1, Base64Error
-
+from wstan.utils import open_udp_endpoint, UdpEndpointClosedError, UdpReader, UdpWriter
+from wstan import loop, config, die, get_sha1, Base64Error, parse_socks5_addr, make_socks5_addr
 
 # key is timestamp//10, value is list of nonce
 # used to detect replay attack (temper bits of ciphertext and observe server's reaction)
@@ -43,6 +43,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         RelayMixin.__init__(self)
         self.connectTargetTask = None
         self._dataToTarget = bytearray()
+        self._udp_endpoint_map = {}  # fast lookup reader/writer using target addr/port
 
     def onConnect(self, request):
         # ----- init decryptor -----
@@ -66,14 +67,19 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             nonceB64 = nonce = None  # for decrypting
 
         # ----- extract header -----
+        addr = port = init_data = None
         path = self.http_request_path
         try:
             if path.startswith(factory.path):
                 path = path[len(factory.path):]
             dat = base64.urlsafe_b64decode(path[1:] if path.startswith('/') else path)
             cmd = ord(self.decrypt(dat[:1]))
-            addr, port, remainData, timestamp = self.parseRelayHeader(dat)
-            if cmd != self.CMD_REQ:
+            is_udp = cmd == self.CMD_DGM
+            if cmd == self.CMD_REQ or cmd == self.CMD_DGM:
+                addr, port, init_data, timestamp = self.parseRelayHeader(dat)
+            elif cmd == self.CMD_RST:
+                timestamp = self.parseEmptyHeader(dat)
+            else:
                 raise ValueError('wrong command %s' % cmd)
         except (ValueError, Base64Error) as e:
             logging.error('invalid request: %s (from %s), path: %s' %
@@ -99,9 +105,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             self.initCipher(encNonce, encryptor=True)
 
         self.tunOpen.set_result(None)
-        self.connectTargetTask = ensure_future(self.connectTarget(addr, port, remainData))
+        if addr:
+            self.connectTargetTask = create_task(
+                self.open_udp_endpoint(addr, port, init_data) if is_udp else self.connectTarget(addr, port, init_data))
 
-    async def connectTarget(self, addr, port, data):
+    async def connectTarget(self, addr, port, data: bytes):
         logging.info('requested %s <--> %s:%s' % (self.peer, addr, port))
         try:
             reader, writer = await open_connection(addr, port)
@@ -115,6 +123,45 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             writer.write(self._dataToTarget)
             self._dataToTarget.clear()
         self.connectTargetTask = None
+
+    async def open_udp_endpoint(self, addr, port, data: bytes):
+        """Open a UDP endpoint if not exist for this pair of addr and port, and then send data."""
+        target = (addr, port)
+        existing = self._udp_endpoint_map.get(target)
+        if existing:
+            reader, writer = existing
+        else:
+            logging.info('requested %s <--> %s:%s udp' % (self.peer, addr, port))
+            self._udp_endpoint_map[target] = ()
+            reader, writer = await open_udp_endpoint(None, target)
+            self.setProxy(reader, writer)
+            self._udp_endpoint_map[target] = (reader, writer)
+        if data:
+            writer.write(data)
+
+    def setProxy(self, reader: StreamReader | UdpReader, writer: StreamWriter | UdpWriter, startPushLoop=True):
+        super().setProxy(reader, writer, startPushLoop)
+        if isinstance(reader, StreamReader):
+            self._exclusiveReader = reader
+            self._exclusiveWriter = writer
+
+    async def _pushToTunnelLoopUdp(self, reader, writer):
+        while True:
+            try:
+                pkt = await reader.read()
+            except Exception:
+                break
+            if pkt is None:
+                break
+            # don't reset tunnel, there may be many udp endpoints
+            self.sendMessage(self.makeDatagramMessage(pkt.addr, pkt.data), True)
+            await self.drain()
+
+        writer.close()
+        for key, pair in list(self._udp_endpoint_map.items()):  # delete from endpoint map
+            if pair[0] == reader:
+                del self._udp_endpoint_map[key]
+                break
 
     # next 2 overrides deal with a implicit state which exists only in wstan server: CONNECTING
     # data received during CONNECTING will be sent after connected
@@ -131,6 +178,8 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             super().resetTunnel(reason)
 
     def onResetTunnel(self):
+        self._udp_endpoint_map.clear()
+
         if self.connectTargetTask:  # received reset before connected to target
             self.sendMessage(self._makeResetMessage(), True)
             self.connectTargetTask.cancel()
@@ -163,7 +212,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             except Exception as e:
                 logging.error('invalid request in reused tun: %s (from %s)' % (e, self.peer))
                 return self.sendClose(3000)
-            self.connectTargetTask = ensure_future(self.connectTarget(addr, port, remainData))
+            self.connectTargetTask = create_task(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
             dat = self.decrypt(dat[1:])
             if self.tunState == self.TUN_STATE_RESETTING:
@@ -171,7 +220,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             if self.connectTargetTask:
                 self._dataToTarget += dat
                 return
-            self._writer.write(dat)
+            self._exclusiveWriter.write(dat)
+        elif cmd == self.CMD_DGM:
+            dat = self.decrypt(dat[1:])
+            addr, port, remain_idx = parse_socks5_addr(dat, True)
+            create_task(self.open_udp_endpoint(addr, port, dat[remain_idx:]))
         else:
             logging.error('wrong command: %s (from %s)' % (cmd, self.peer))
             self.sendClose(3000)
@@ -230,7 +283,7 @@ def main():
         so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
     loop.set_exception_handler(silent_timeout_err_handler)
-    ensure_future(clean_seen_nonce())
+    loop.create_task(clean_seen_nonce())
 
     print('wstan server -- listening on %s:%d' % (addr, port))
     try:
