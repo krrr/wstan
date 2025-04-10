@@ -27,7 +27,7 @@ from wstan.autobahn.asyncio.websocket import WebSocketServerProtocol, WebSocketS
 from wstan.autobahn.websocket.types import ConnectionDeny
 from wstan.relay import RelayMixin
 from wstan.utils import open_udp_endpoint, UdpEndpointClosedError, UdpReader, UdpWriter
-from wstan import loop, config, die, get_sha1, Base64Error, parse_socks5_addr, make_socks5_addr
+from wstan import loop, config, die, get_sha1, Base64Error, parse_socks5_addr
 
 # key is timestamp//10, value is list of nonce
 # used to detect replay attack (temper bits of ciphertext and observe server's reaction)
@@ -83,14 +83,14 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 raise ValueError('wrong command %s' % cmd)
         except (ValueError, Base64Error) as e:
             logging.error('invalid request: %s (from %s), path: %s' %
-                          (e, self.peer, path))
+                          (e, self.peer_name(), path))
             raise ConnectionDeny(400)
 
         if not config.tun_ssl:
             # filter replay attack
             seen = seenNonceByTime[timestamp // 10]
             if nonce in seen:
-                logging.warning('replay attack detected (from %s)' % self.peer)
+                logging.warning('replay attack detected (from %s)' % self.peer_name())
                 raise ConnectionDeny(400)
             seen.add(nonce)
 
@@ -110,11 +110,11 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                 self.open_udp_endpoint(addr, port, init_data) if is_udp else self.connectTarget(addr, port, init_data))
 
     async def connectTarget(self, addr, port, data: bytes):
-        logging.info('requested %s <--> %s:%s' % (self.peer, addr, port))
+        logging.info('requested %s <--> %s:%s' % (self.peer_name(), addr, port))
         try:
             reader, writer = await open_connection(addr, port)
         except (ConnectionError, OSError, TimeoutError) as e:
-            logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.peer))
+            logging.info("can't connect to %s:%s (from %s)" % (addr, port, self.peer_name()))
             return self.resetTunnel("can't connect to %s:%s" % (addr, port), str(e))
         self.setProxy(reader, writer)
         if data:
@@ -131,7 +131,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         if existing:
             reader, writer = existing
         else:
-            logging.info('requested %s <--> %s:%s udp' % (self.peer, addr, port))
+            logging.info('requested %s <--> %s:%s udp' % (self.peer_name(), addr, port))
             self._udp_endpoint_map[target] = ()
             reader, writer = await open_udp_endpoint(None, target)
             self.setProxy(reader, writer)
@@ -149,7 +149,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         while True:
             try:
                 pkt = await reader.read()
-            except Exception:
+            except (CancelledError, UdpEndpointClosedError):
                 break
             if pkt is None:
                 break
@@ -191,7 +191,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
-            logging.error('non binary ws message received (from %s)' % self.peer)
+            logging.error('non binary ws message received (from %s)' % self.peer_name())
             return self.sendClose(3000)
 
         cmd = ord(self.decrypt(dat[:1]))
@@ -199,7 +199,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             try:
                 reason, __ = self.parseResetMessage(dat)
             except ValueError as e:
-                logging.error('invalid reset message: %s (from %s)' % (e, self.peer))
+                logging.error('invalid reset message: %s (from %s)' % (e, self.peer_name()))
                 return self.sendClose(3000)
             if reason:
                 logging.info('tunnel abnormal reset: %s' % reason)
@@ -210,7 +210,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
                     raise Exception('reset received when not idle')
                 addr, port, remainData, __ = self.parseRelayHeader(dat)
             except Exception as e:
-                logging.error('invalid request in reused tun: %s (from %s)' % (e, self.peer))
+                logging.error('invalid request in reused tun: %s (from %s)' % (e, self.peer_name()))
                 return self.sendClose(3000)
             self.connectTargetTask = create_task(self.connectTarget(addr, port, remainData))
         elif cmd == self.CMD_DAT:
@@ -226,7 +226,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
             addr, port, remain_idx = parse_socks5_addr(dat, True)
             create_task(self.open_udp_endpoint(addr, port, dat[remain_idx:]))
         else:
-            logging.error('wrong command: %s (from %s)' % (cmd, self.peer))
+            logging.error('wrong command: %s (from %s)' % (cmd, self.peer_name()))
             self.sendClose(3000)
 
     def sendServerStatus(self, redirectUrl=None, redirectAfter=0):
@@ -236,7 +236,7 @@ class WSTunServerProtocol(WebSocketServerProtocol, RelayMixin):
         """Logging failed requests."""
         logWarn = True
         if reason and not self.tunOpen.done():
-            logging.warning(reason + ' (from %s)' % self.peer)
+            logging.warning(reason + ' (from %s)' % self.peer_name())
             logWarn = False
 
         RelayMixin.onClose(self, wasClean, code, reason, logWarn=logWarn)

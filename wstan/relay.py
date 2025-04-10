@@ -25,10 +25,10 @@ import struct
 import hashlib
 import time
 import random
-from asyncio import ensure_future, Future, CancelledError
+from asyncio import Future
 from asyncio.streams import FlowControlMixin, StreamReader, StreamWriter
-from wstan import config, parse_socks5_addr, make_socks5_addr, parse_sock5_udp_addr
-from wstan.utils import UdpEndpointClosedError, UdpReader, UdpWriter
+from wstan import config, parse_socks5_addr, make_socks5_addr
+from wstan.utils import UdpReader, UdpWriter
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
@@ -38,14 +38,6 @@ TIMESTAMP_LEN = 8  # double
 
 def _get_digest(dat):
     return hmac.new(config.bin_key, dat, hashlib.sha1).digest()[:DIGEST_LEN]
-
-
-# def _on_pushToTunTaskDone(task):
-#     # suppress annoying "CancelledError exception not retrieved" error on Py3.5+
-#     try:
-#         task.exception()
-#     except CancelledError:  # doc says it will raise this if canceled, but...
-#         pass
 
 
 class OurFlowControlMixin(FlowControlMixin):
@@ -190,7 +182,6 @@ class RelayMixin(OurFlowControlMixin):
             assert isinstance(reader, StreamReader)
             assert not len(self._pushToTunTasks)
             task = asyncio.create_task(self._pushToTunnelLoopTcp(reader, writer))
-        # task.add_done_callback(_on_pushToTunTaskDone)
         self._pushToTunTasks.append(task)
 
     def _makeResetMessage(self, reason='', err=''):
@@ -241,3 +232,7 @@ class RelayMixin(OurFlowControlMixin):
             t.cancel()
         self._pushToTunTasks.clear()
         self._exclusiveReader = self._exclusiveWriter = None
+
+    def peer_name(self):
+        """For displaying"""
+        return self.peer.replace('tcp:', '')

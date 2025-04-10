@@ -11,6 +11,8 @@ class UdpEndpointClosedError(Exception):
 
 
 class UdpEndpointProtocol(asyncio.DatagramProtocol):
+    __slots__ = ("queue", "transport", "_error")
+
     """
     Internal protocol class bridging asyncio callbacks to the reader/writer.
     """
@@ -47,6 +49,8 @@ class UdpEndpointProtocol(asyncio.DatagramProtocol):
 
 
 class UdpReader:
+    __slots__ = ("_queue", "_transport")
+
     def __init__(self, queue: asyncio.Queue, transport: asyncio.DatagramTransport):
         self._queue = queue
         self._transport = transport
@@ -82,6 +86,8 @@ class UdpReader:
 
 # --- Writer Class ---
 class UdpWriter:
+    __slots__ = ("_transport", "_remote_addr")
+
     def __init__(self, transport: asyncio.DatagramTransport, remote_addr: tuple | None):
         self._transport = transport
         self._remote_addr = remote_addr  # Default destination (if set)

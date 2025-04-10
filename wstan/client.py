@@ -23,7 +23,7 @@ import time
 import os
 import base64
 import socket
-from asyncio import wait_for, sleep, ensure_future, CancelledError, StreamReader, StreamWriter
+from asyncio import wait_for, sleep, create_task, CancelledError, StreamReader, StreamWriter
 from asyncio.exceptions import IncompleteReadError
 from collections import deque
 from urllib import parse as urlparse
@@ -250,7 +250,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             self.sendClose(1000)
         else:
             assert not self.checkTimeoutTask
-            self.checkTimeoutTask = ensure_future(self._checkIdleTimeout())
+            self.checkTimeoutTask = create_task(self._checkIdleTimeout())
             self.inPool = True
             self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
             self.pool.append(self)
@@ -324,7 +324,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             if isinstance(tun.connLostReason, ConnectionResetError):
                 # GFW random reset HTTP stream it can't recognize, just retry
-                return ensure_future(cls.openTunnel(target, initDat, reader, writer, retryCount + 1))
+                return create_task(cls.openTunnel(target, initDat, reader, writer, retryCount + 1))
 
             msg = translate_err_msg(msg)
             logging.error("can't connect to server: %s" % msg)
@@ -420,7 +420,7 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
         dat = method + b' ' + path + b' ' + ver + rest_dat
         dat = http_die_soon(dat)  # let target know keep-alive is not supported
 
-    ensure_future(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
+    create_task(WSTunClientProtocol.openTunnel((host.decode(), port), dat, reader, writer))
 
 
 async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWriter):
@@ -463,7 +463,7 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
             # e.g. Old SSH client will wait for server after conn established
             init_dat = None
 
-        ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), init_dat, reader, writer))
+        create_task(WSTunClientProtocol.openTunnel((target_addr, target_port), init_dat, reader, writer))
     elif cmd == 0x03:  # UDP ASSOCIATE
         # listen for udp packets
         tcp_socket = writer.get_extra_info('socket')  # udp should use same family as tcp socket
@@ -485,7 +485,7 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
         udp_writer.set_default_remote_addr(pkt.addr)
         target_addr, target_port, remain_idx = parse_sock5_udp_addr(pkt.data)
 
-        ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), pkt.data[remain_idx:], udp_reader, udp_writer))
+        create_task(WSTunClientProtocol.openTunnel((target_addr, target_port), pkt.data[remain_idx:], udp_reader, udp_writer))
 
         # user-agent will keep this connection open until finished sending udp packet
         try:
@@ -531,7 +531,7 @@ async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
     except asyncio.TimeoutError:
         dat = None
 
-    ensure_future(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
+    create_task(WSTunClientProtocol.openTunnel((target_addr, target_port), dat, reader, writer))
 
 
 async def setup_http_tunnel() -> socket.socket:
