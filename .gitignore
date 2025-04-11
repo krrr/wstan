@@ -4,3 +4,5 @@
 /extra/build/
 /extra/asynctfo.egg-info/
 /extra/asynctfo/.vs/
+**/node_modules
+**/__pycache__
