@@ -2,7 +2,7 @@
 [![PyPI](https://img.shields.io/pypi/v/wstan.svg)](https://pypi.python.org/pypi/wstan)
 [![PyPI](https://img.shields.io/pypi/pyversions/wstan.svg)](https://pypi.python.org/pypi/wstan)
 
-Tunneling TCP connections in WebSocket to circumvent firewall.
+Tunneling TCP/UDP connections in WebSocket to circumvent firewall.
 It's light and can run on some PaaS (SSL supported).
 
 `User-Agent(SOCKS/HTTP) <--> (wstan)Client <-- Internet --> (wstan)Server <--> Target`

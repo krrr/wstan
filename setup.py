@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(name='wstan',
       version='0.5.0',
-      description='Tunneling TCP in WebSocket',
+      description='Tunneling TCP/UDP in WebSocket',
       author='krrr',
       author_email='guogaishiwo@gmail.com',
       url='https://github.com/krrr/wstan',

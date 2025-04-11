@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wstan"
 version = "0.5.0"
-description = "Tunneling TCP in WebSocket"
+description = "Tunneling TCP/UDP in WebSocket"
 readme = "README.md"
 authors = [
     { name = "krrr", email = "guogaishiwo@gmail.com" }
