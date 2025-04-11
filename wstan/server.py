@@ -271,16 +271,13 @@ factory.closeHandshakeTimeout = 4
 def main():
     addr = config.tun_addr or config.uri_addr
     port = config.tun_port or config.uri_port
+    if ',' in addr:
+        addr = addr.split(',')
 
     try:
         server = loop.run_until_complete(loop.create_server(factory, addr, port))
     except OSError:
         die('wstan server failed to bind on %s:%d' % (addr, port))
-    so = server.sockets[0]
-    if len(server.sockets) == 1 and so.family == socket.AF_INET6 and hasattr(socket, 'IPPROTO_IPV6'):
-        # force user to specify URI in wstan server is a bad design, this try to fix
-        # inconvenience in dual stack server
-        so.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # default 1 in Linux
 
     loop.set_exception_handler(silent_timeout_err_handler)
     loop.create_task(clean_seen_nonce())

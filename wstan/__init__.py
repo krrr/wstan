@@ -34,7 +34,7 @@ from collections import deque
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from wstan.autobahn.websocket.protocol import parseWsUrl
 
-__version__ = '0.4.2'
+__version__ = '0.5.0'
 
 
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries
