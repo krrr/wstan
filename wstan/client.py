@@ -576,12 +576,12 @@ async def setup_http_tunnel() -> socket.socket:
 # load html template (optional) for web log viewer
 try:
     import jinja2
-    import pkg_resources
+    from importlib.resources import files, as_file
 except ImportError:
     logViewTemplate = jinja2 = pkg_resources = None  # fallback to plain text version
 else:
-    logViewTemplate = jinja2.Template(
-        pkg_resources.resource_string(__package__, 'logview.html').decode('utf-8'))
+    with files(__package__).joinpath('logview.html').open('r', encoding='utf-8') as f:
+        logViewTemplate = jinja2.Template(f.read())
 
 
 factory = WebSocketClientFactory(config.uri)
