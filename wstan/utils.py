@@ -168,3 +168,11 @@ async def open_udp_endpoint(
     writer = UdpWriter(transport, remote_addr)
 
     return reader, writer
+
+
+
+class DoNothing:
+    def __getattr__(self, name):
+        def do_nothing_method(*args, **kwargs):
+            pass
+        return do_nothing_method

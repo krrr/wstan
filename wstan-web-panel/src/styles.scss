@@ -1,0 +1,55 @@
+
+body {
+  overflow: hidden;
+  margin: 0;
+}
+
+// convenient classes
+.h100 {
+  height: 100%;
+}
+
+.flex1 {
+  flex: 1;
+  min-height: 0;
+}
+.flex-box-h {
+  display: flex;
+}
+.flex-box-v {
+  display: flex;
+  flex-direction: column;
+}
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+
+.card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 2px;
+  border: 1px solid rgba(0,0,0,.2);
+  background: white;
+  .card-title {
+    font-size: 16px;
+    line-height: 38px;
+    font-weight: 700;
+    height: 38px;
+    padding: 0 12px;
+    .anticon {
+      margin-right: 8px;
+    }
+  }
+  .card-content {
+    flex: 1;
+    min-height: 0;
+    padding: 6px 12px;
+  }
+  .card-content.no-padding {
+    padding: 0;
+  }
+}

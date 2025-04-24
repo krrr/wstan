@@ -58,7 +58,7 @@ class RelayMixin(OurFlowControlMixin):
     CMD_REQ, CMD_DAT, CMD_RST, CMD_DGM = range(4)  # every ws message has this command type
     DAT_LOG_MAX_LEN = 60  # maximum length of logged data which triggered error, in bytes
     PUSH_TO_TUN_CONN_ERR_MSG = 'override me!'
-    allConn = weakref.WeakSet() if config.debug else None  # used to debug resource leak
+    allConn = weakref.WeakSet()
 
     def __init__(self):
         OurFlowControlMixin.__init__(self)
@@ -69,9 +69,8 @@ class RelayMixin(OurFlowControlMixin):
         self._exclusiveWriter = None
         # they do nothing if websocket is not wrapped in SSL
         self.encrypt = self.decrypt = lambda dat: dat
-        if config.debug:
-            self.allConn.add(self)
-            logging.debug('tunnel created (total %d)' % len(self.allConn))
+        self.allConn.add(self)
+        logging.debug('Tunnel created (total %d)' % len(self.allConn))
 
     def parseRelayHeader(self, dat: bytes):
         """Extract addr, port and rest data from relay request. Parts except CMD (first byte)
@@ -150,7 +149,7 @@ class RelayMixin(OurFlowControlMixin):
 
     def succeedReset(self):
         """This method will be called after succeeded to reset tunnel."""
-        logging.debug('tunnel reset succeed')
+        logging.debug('Tunnel reset succeed')
         self.tunState = self.TUN_STATE_IDLE
 
     async def _pushToTunnelLoopTcp(self, reader: StreamReader, writer: StreamWriter):
@@ -200,13 +199,13 @@ class RelayMixin(OurFlowControlMixin):
 
     def resetTunnel(self, reason=''):
         if self.tunState == self.TUN_STATE_USING:
-            logging.debug('resetting tunnel')
+            logging.debug('Resetting tunnel')
             self.sendMessage(self._makeResetMessage(reason), True)
             self._closeAllPushToTun()
             self.tunState = self.TUN_STATE_RESETTING
         else:
             self.sendClose(3001)
-            logging.error('wrong state in resetTunnel: %s' % self.tunState)
+            logging.error('Wrong state in resetTunnel: %s' % self.tunState)
 
     def onResetTunnel(self):
         if self.tunState == self.TUN_STATE_USING:
@@ -222,10 +221,9 @@ class RelayMixin(OurFlowControlMixin):
     def onClose(self, wasClean, code, reason, logWarn=True):
         self._closeAllPushToTun()
         if logWarn and not wasClean and reason:
-            logging.warning('tunnel broken: ' + reason)
-        if config.debug:
-            self.allConn.remove(self)
-            logging.debug('tunnel closed (total %d)' % len(self.allConn))
+            logging.warning('Tunnel broken: ' + reason)
+        self.allConn.remove(self)
+        logging.debug('Tunnel closed (total %d)' % len(self.allConn))
 
     def _closeAllPushToTun(self):
         for t in self._pushToTunTasks:

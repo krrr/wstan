@@ -1,5 +1,7 @@
 .idea
 *.iml
+dist
+wstan/static/*
 /extra/dist/
 /extra/build/
 /extra/asynctfo.egg-info/

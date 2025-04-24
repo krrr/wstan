@@ -1,0 +1,11 @@
+{
+  "/api": {
+    "target": "http://localhost:1084",
+    "secure": false,
+    "ws": true,
+    "changeOrigin": true,
+    "logLevel": "debug",
+    "proxyTimeout": 30000,
+    "pathRewrite": { }
+  }
+}

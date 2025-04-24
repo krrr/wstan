@@ -27,16 +27,19 @@ from asyncio import wait_for, sleep, create_task, CancelledError, StreamReader, 
 from asyncio.exceptions import IncompleteReadError
 from collections import deque
 from urllib import parse as urlparse
-from wstan.autobahn.util import makeHttpResp
+
+from sanic.server import HttpProtocol
+
 from wstan.autobahn.websocket.protocol import parseHttpHeader
 from wstan.autobahn.asyncio.websocket import WebSocketClientProtocol, WebSocketClientFactory
 from wstan.relay import RelayMixin
 from wstan import (parse_socks5_addr, make_socks5_addr, loop, config, can_return_error_page, die,
                    gen_error_page, get_sha1, http_die_soon, is_http_req, parse_sock5_udp_addr,
-                   my_sock_connect, InMemoryLogHandler, __version__)
-from wstan.utils import open_udp_endpoint, UdpReader, UdpWriter, UdpEndpointClosedError
+                   my_sock_connect)
+from wstan.utils import open_udp_endpoint, UdpReader, UdpWriter, UdpEndpointClosedError, DoNothing
+from wstan import web_panel
 
-INIT_DATA_LEN = 2048
+INIT_DATA_LEN = 4096
 INIT_DATA_TIMEOUT = 0.03  # sec
 
 
@@ -163,7 +166,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def onMessage(self, dat, isBinary):
         if not isBinary:
-            logging.error('non binary ws message received')
+            logging.error('Non binary ws message received')
             return self.sendClose(3000)
 
         cmd = ord(self.decrypt(dat[:1]))
@@ -192,7 +195,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 return
             self._exclusiveWriter.write(b'\x00\x00' + dat)  # RSV
         else:
-            logging.error('wrong command')
+            logging.error('Wrong command')
 
     def onPong(self, _):
         self.updateRtt(time.time() - self.lastPingSentTime)
@@ -266,14 +269,14 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     async def openTunnel(cls, target: (str, int), initDat: bytes, reader: StreamReader | UdpReader,
                          writer: StreamWriter | UdpWriter, retryCount=0):
         is_udp = isinstance(reader, UdpReader)
-        logging.info('requesting %s:%d %s' % (target[0], target[1], 'udp' if is_udp else ''))
+        logging.info('Requesting %s:%d %s' % (target[0], target[1], 'UDP' if is_udp else ''))
 
         if not initDat:
             logging.debug('openTunnel with no data')
         canErr = not is_udp and can_return_error_page(initDat)
 
         if cls.pool:  # reuse from pool
-            logging.debug('reuse tunnel from pool (total %s)' % len(cls.pool))
+            logging.debug('Reusing tunnel from pool (total %s)' % len(cls.pool))
             tun = cls.pool[0]
             tun.checkTimeoutTask.cancel()
             tun.checkTimeoutTask = None
@@ -311,7 +314,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         except Exception as e:
             msg = translate_err_msg(str(e))
             dest = 'proxy' if config.proxy and not sock else 'wstan server'
-            logging.error("can't connect to %s: %s" % (dest, msg))
+            logging.error("Can't connect to %s: %s" % (dest, msg))
             if canErr:
                 writer.write(gen_error_page("can't connect to " + dest, msg))
             return writer.close()
@@ -327,13 +330,13 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 return create_task(cls.openTunnel(target, initDat, reader, writer, retryCount + 1))
 
             msg = translate_err_msg(msg)
-            logging.error("can't connect to server: %s" % msg)
+            logging.error("Can't connect to server: %s" % msg)
             if tun.wasNotCleanReason and tun.canReturnErrorPage:  # write before closing writer
                 writer.write(gen_error_page("can't connect to wstan server", msg))
             return writer.close()
 
         if retryCount > 0:
-            logging.debug('tcp reset happen, retried %d times' % retryCount)
+            logging.debug('TCP reset happen, retried %d times' % retryCount)
 
 
 def translate_err_msg(msg):
@@ -357,15 +360,19 @@ def translate_err_msg(msg):
         return msg
 
 
-def gen_log_view_page():
-    if logViewTemplate is None:
-        txt = 'wstan log (latest 200, descending):\n\n' + \
-              '\n'.join(reversed(InMemoryLogHandler.logs))
-        return makeHttpResp(txt, type_='text/plain')
-    else:
-        return makeHttpResp(logViewTemplate.render(version=__version__,
-                                                   logs=tuple(reversed(InMemoryLogHandler.logs)),
-                                                   rtt=WSTunClientProtocol.rtt))
+async def pass_to_sanic(writer: StreamWriter, http_req: bytes):
+    """Pass existing socket to sanic"""
+    transport = writer.transport
+    # noinspection PyProtectedMember
+    assert writer._transport, 'protected member changed'
+    writer._transport = DoNothing()  # hack private member! must prevent it closing transport when garbage collected. wasted a lot of time, really stupid bug
+
+    protocol = HttpProtocol(loop=loop, app=web_panel.sanic_app, connections=web_panel.server.connections)
+    transport.set_protocol(protocol)
+    protocol.connection_made(transport)
+    await sleep(0)  # wait sanic async init task done
+    assert protocol.http is not None
+    protocol.data_received(http_req)
 
 
 async def dispatch_request(reader: StreamReader, writer: StreamWriter):
@@ -382,7 +389,7 @@ async def dispatch_request(reader: StreamReader, writer: StreamWriter):
             if is_http_req(dat):
                 handler = http_proxy_handler
             else:
-                logging.warning('unknown request')
+                logging.warning('Unknown request')
                 return writer.close()
 
         await handler(dat, reader, writer)
@@ -405,8 +412,7 @@ async def http_proxy_handler(dat: bytes, reader: StreamReader, writer: StreamWri
         parsed = urlparse.urlparse(url)
         path, host, port = parsed.path, parsed.hostname, parsed.port or 80
     else:
-        writer.write(gen_log_view_page())
-        return writer.close()
+        return await pass_to_sanic(writer, dat)
 
     if method == b'CONNECT':
         writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
@@ -443,7 +449,7 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
         cmd, addr_header = dat[1], dat[2:]
         target_addr, target_port = parse_socks5_addr(addr_header)
     except (ValueError, IndexError):
-        logging.warning('invalid SOCKS v5 relay request')
+        logging.warning('Invalid SOCKS v5 relay request')
         return writer.close()
 
     if cmd == 0x01:  # CONNECT
@@ -457,6 +463,7 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
             init_dat = await wait_for(reader.read(INIT_DATA_LEN), INIT_DATA_TIMEOUT)
             if not init_dat:
                 return writer.close()
+            logging.debug('Initial data len: %s' % len(init_dat))
         except asyncio.TimeoutError:
             # 20ms passed and no data received, rare but legal behavior.
             # timeout may always happen if set to 10ms, and enable asyncio library debug mode will "fix" it
@@ -471,13 +478,13 @@ async def socks5_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
         udp_port = udp_writer.get_extra_info('socket').getsockname()[1]  # ephemeral port
         listen_addr = tcp_socket.getsockname()[0]  # exposed address which user-agent is talking to
         writer.write(b'\x05\x00' + make_socks5_addr(listen_addr, udp_port))  # \x00 == SUCCEEDED
-        logging.debug('start listening udp port %s' % udp_port)
+        logging.debug('Start listening UDP port %s' % udp_port)
 
         # initial data, same as TCP. but must wait, because we need to know target address
         try:
             pkt = await wait_for(udp_reader.read(), 10)
         except asyncio.TimeoutError:
-            logging.error('associate success but no udp packet received')
+            logging.error('Associate success but no UDP packet received')
             udp_writer.close()
             return writer.close()
         if pkt is None:
@@ -511,12 +518,12 @@ async def socks4_tcp_handler(dat: bytes, reader: StreamReader, writer: StreamWri
             target_addr = socket.inet_ntoa(ip)
         target_port = int.from_bytes(port, 'big')
     except Exception:
-        logging.warning('invalid SOCKS v4 request')
+        logging.warning('Invalid SOCKS v4 request')
         return writer.close()
 
     # Only support CONNECT command
     if cmd != 0x01:  # CONNECT
-        logging.warning('unsupported SOCKS v4 command')
+        logging.warning('Unsupported SOCKS v4 command')
         writer.write(b'\x00\x5B\x00\x00\x00\x00\x00\x00')  # \x5B == REQUEST_REJECTED
         return writer.close()
 
@@ -551,8 +558,8 @@ async def setup_http_tunnel() -> socket.socket:
 
     http_response_data = dat[:end+4]
     http_status_line, http_headers, __ = parseHttpHeader(http_response_data)
-    logging.debug("received HTTP status line for proxy connect request: %s" % http_status_line)
-    logging.debug("received HTTP headers for proxy connect request: %s" % http_headers)
+    logging.debug("Received HTTP status line for proxy connect request: %s" % http_status_line)
+    logging.debug("Received HTTP headers for proxy connect request: %s" % http_headers)
     sl = http_status_line.split()
     if len(sl) < 2:
         raise ConnectionError("bad HTTP response status line '%s'" % http_status_line)
@@ -568,20 +575,9 @@ async def setup_http_tunnel() -> socket.socket:
             reason = ""
         raise ConnectionError("HTTP proxy connect failed (%d%s)" % (status_code, reason))
     if dat[end+4:]:
-        logging.warning('got extra data in HTTP proxy resp: %s' % dat[end+4:])
+        logging.warning('Got extra data in HTTP proxy resp: %s' % dat[end+4:])
 
     return sock
-
-
-# load html template (optional) for web log viewer
-try:
-    import jinja2
-    from importlib.resources import files, as_file
-except ImportError:
-    logViewTemplate = jinja2 = pkg_resources = None  # fallback to plain text version
-else:
-    with files(__package__).joinpath('logview.html').open('r', encoding='utf-8') as f:
-        logViewTemplate = jinja2.Template(f.read())
 
 
 factory = WebSocketClientFactory(config.uri)
@@ -601,6 +597,9 @@ def main():
         die('wstan client failed to bind on %s:%d' % (config.addr, config.port))
 
     print('wstan client -- SOCKS/HTTP server listening on %s:%d' % (config.addr, config.port))
+
+    loop.create_task(web_panel.setup_server(loop))
+
     try:
         loop.run_forever()
     except KeyboardInterrupt:

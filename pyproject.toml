@@ -10,7 +10,7 @@ readme = "README.md"
 authors = [
     { name = "krrr", email = "guogaishiwo@gmail.com" }
 ]
-dependencies = ["cryptography"]
+dependencies = ["cryptography", "sanic"]
 requires-python = ">=3.10"
 keywords = ["proxy", "tunnel", "websocket"]
 license = "MIT"
@@ -25,7 +25,11 @@ classifiers =[
 urls = { homepage = "https://github.com/krrr/wstan" }
 
 [project.optional-dependencies]
-advanced_web_log_viewer = ["jinja2"]
+faster_event_loop = ["uvloop"]
 
 [project.scripts]
 wstan = "wstan:main_entry"
+
+
+[tool.setuptools.package-data]
+wstan = ["static/*"]

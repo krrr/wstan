@@ -31,6 +31,8 @@ import ipaddress
 from binascii import Error as Base64Error
 from configparser import ConfigParser, ParsingError
 from collections import deque
+import importlib.util
+
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from wstan.autobahn.websocket.protocol import parseWsUrl
 
@@ -315,10 +317,25 @@ def get_sha1(dat):
 
 
 class InMemoryLogHandler(logging.Handler):
-    logs = deque(maxlen=200)
+    logs = deque(maxlen=512)
+    _subscribers = []
 
-    def emit(self, record):
-        self.logs.append(self.format(record))
+    def emit(self, record: logging.LogRecord):
+        formatted = {'asctime': record.asctime, 'levelname': record.levelname, 'message': record.getMessage()}
+        for i in self._subscribers:
+            i(formatted)
+        self.logs.append(formatted)
+
+    @classmethod
+    def subscribe(cls, func):
+        cls._subscribers.append(func)
+
+    @classmethod
+    def unsubscribe(cls, func):
+        try:
+            cls._subscribers.remove(func)
+        except ValueError:
+            pass
 
 
 def main_entry():
@@ -334,6 +351,11 @@ def main_entry():
     logging.basicConfig(level=logging.DEBUG if config.debug else logging.INFO,
                         format='%(asctime)s %(levelname).1s: %(message)s',
                         datefmt='%m-%d %H:%M:%S')
+
+    if importlib.util.find_spec('uvloop'):
+        import uvloop
+        uvloop.install()
+        logging.info('Using uvloop to speedup')
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
