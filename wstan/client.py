@@ -114,21 +114,25 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     def __init__(self):
         CustomWSClientProtocol.__init__(self)
         RelayMixin.__init__(self)
-        self.lastIdleTime = None
-        self.retryCount = 0
-        self.checkTimeoutTask = None
-        self.inPool = False
-        self.canReturnErrorPage = False
-        self.poolMaxIdleTimeout = config.pool_max_idle  # close tunnels in pool on timeout (in seconds)
-        self.poolMinIdleTimeout = round(config.pool_max_idle / 3)
-        self.poolSize = config.pool_size
+        self.last_idle_time = None
+        self.check_timeout_task = None
+        self.in_pool = False
+        self.can_return_error_page = False
+        self.pool_max_idle_timeout = config.pool_max_idle  # close tunnels in pool on timeout (in seconds)
+        self.pool_min_idle_timeout = round(config.pool_max_idle / 3)
+        self.pool_size = config.pool_size
+        self.start_handshake_time = None
         nonce = os.urandom(16)
         if not config.tun_ssl:
             self.initCipher(nonce, encryptor=True)
         self.customWsKey = base64.b64encode(nonce)  # nonce used to encrypt in base64
 
+    def _connectionMade(self):
+        self.start_handshake_time = time.time()
+        super()._connectionMade()
+
     def resetTunnel(self, reason=''):
-        if self.poolMaxIdleTimeout <= 0 or self.poolSize <= 0:
+        if self.pool_max_idle_timeout <= 0 or self.pool_size <= 0:
             # skip sending reset command, close directly instead
             self.tunState = self.TUN_STATE_RESETTING
             self.sendClose(1000)
@@ -136,7 +140,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             super().resetTunnel(reason)
 
     def onResetTunnel(self):
-        if self.poolMaxIdleTimeout <= 0 or self.poolSize <= 0:
+        if self.pool_max_idle_timeout <= 0 or self.pool_size <= 0:
             # skip sending reset command, close directly instead
             self.tunState = self.TUN_STATE_IDLE
             self.sendClose(1000)
@@ -145,13 +149,14 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
     def succeedReset(self):
         super().succeedReset()
-        self.lastIdleTime = time.time()
+        self.last_idle_time = time.time()
         self.addToPool()
 
     def onOpen(self):
         self.tunOpen.set_result(None)
+        self.updateRtt(time.time() - self.start_handshake_time)
 
-        self.lastIdleTime = time.time()
+        self.last_idle_time = time.time()
         self.startPushToTunLoop(self._exclusiveReader, self._exclusiveWriter)
         self.setAutoPing(self.TUN_AUTO_PING_INTERVAL, self.TUN_AUTO_PING_TIMEOUT)
         if not config.debug:
@@ -175,7 +180,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             if reason:
                 err = translate_err_msg(err)
                 logging.info('%s: %s' % (reason, err))
-                if self.canReturnErrorPage:
+                if self.can_return_error_page:
                     self._exclusiveWriter.write(gen_error_page(reason, err))
             self.onResetTunnel()
         elif cmd == self.CMD_DAT:
@@ -187,7 +192,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
                 # receiving the command.
                 # Can't just throw away dat, because decryptor need to be updated
                 return
-            self.canReturnErrorPage = False
+            self.can_return_error_page = False
             self._exclusiveWriter.write(dat)
         elif cmd == self.CMD_DGM:
             dat = self.decrypt(dat[1:])
@@ -236,25 +241,25 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
     async def _checkIdleTimeout(self):
         while self.state == self.STATE_OPEN:
             # dynamic timeout
-            timeout = self.poolMaxIdleTimeout - (len(self.pool) / self.poolSize) * (self.poolMaxIdleTimeout - self.poolMinIdleTimeout)
-            await sleep(self.poolMinIdleTimeout / 2)
-            if self.tunState == self.TUN_STATE_IDLE and (time.time() - self.lastIdleTime) > timeout:
+            timeout = self.pool_max_idle_timeout - (len(self.pool) / self.pool_size) * (self.pool_max_idle_timeout - self.pool_min_idle_timeout)
+            await sleep(self.pool_min_idle_timeout / 2)
+            if self.tunState == self.TUN_STATE_IDLE and (time.time() - self.last_idle_time) > timeout:
                 self.tryRemoveFromPool()  # avoid accidentally using a closing tunnel
                 self.sendClose(1000)
 
     def tryRemoveFromPool(self):
-        if self.inPool:
+        if self.in_pool:
             self.pool.remove(self)
-            self.inPool = False
+            self.in_pool = False
 
     def addToPool(self):
         assert self.tunState == self.TUN_STATE_IDLE
-        if len(self.pool) >= self.poolSize:
+        if len(self.pool) >= self.pool_size:
             self.sendClose(1000)
         else:
-            assert not self.checkTimeoutTask
-            self.checkTimeoutTask = create_task(self._checkIdleTimeout())
-            self.inPool = True
+            assert not self.check_timeout_task
+            self.check_timeout_task = create_task(self._checkIdleTimeout())
+            self.in_pool = True
             self.setAutoPing(self.POOL_AUTO_PING_INTERVAL, self.POOL_AUTO_PING_TIMEOUT)
             self.pool.append(self)
 
@@ -278,11 +283,11 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
         if cls.pool:  # reuse from pool
             logging.debug('Reusing tunnel from pool (total %s)' % len(cls.pool))
             tun = cls.pool[0]
-            tun.checkTimeoutTask.cancel()
-            tun.checkTimeoutTask = None
+            tun.check_timeout_task.cancel()
+            tun.check_timeout_task = None
             tun.tryRemoveFromPool()
             tun.setAutoPing(cls.TUN_AUTO_PING_INTERVAL, cls.TUN_AUTO_PING_TIMEOUT)
-            tun.canReturnErrorPage = canErr
+            tun.can_return_error_page = canErr
             tun.setProxy(reader, writer)
             if is_udp:
                 tun.sendMessage(tun.makeDatagramMessage(target, initDat), True)
@@ -303,7 +308,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
             # Lower latency by sending relay header and data in ws handshake
             tun.customUriPath = factory.path + base64.urlsafe_b64encode(
                 tun.makeRelayHeader(target, initDat, is_udp)).decode()
-            tun.canReturnErrorPage = canErr
+            tun.can_return_error_page = canErr
             # Data may arrive before setProxy if wait for tunOpen here and then set proxy.
             tun.setProxy(reader, writer, startPushLoop=False)  # push loop will start in onOpen
 
@@ -331,7 +336,7 @@ class WSTunClientProtocol(CustomWSClientProtocol, RelayMixin):
 
             msg = translate_err_msg(msg)
             logging.error("Can't connect to server: %s" % msg)
-            if tun.wasNotCleanReason and tun.canReturnErrorPage:  # write before closing writer
+            if tun.wasNotCleanReason and tun.can_return_error_page:  # write before closing writer
                 writer.write(gen_error_page("can't connect to wstan server", msg))
             return writer.close()
 
