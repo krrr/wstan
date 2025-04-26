@@ -36,7 +36,7 @@ import importlib.util
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from wstan.autobahn.websocket.protocol import parseWsUrl
 
-__version__ = '0.5.0'
+__version__ = '0.5.1'
 
 
 # Don't use "super().__init__()" in constructor of classes of this package (all libraries

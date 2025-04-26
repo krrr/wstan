@@ -7,6 +7,7 @@ import {NzIconDirective} from "ng-zorro-antd/icon";
 import {NzTagComponent} from "ng-zorro-antd/tag";
 import {NzTableComponent, NzTableModule,} from "ng-zorro-antd/table";
 import {NzModalService} from "ng-zorro-antd/modal";
+import {log} from "ng-zorro-antd/core/logger";
 
 
 @Component({
@@ -187,7 +188,10 @@ export class DashboardComponent implements OnDestroy, AfterViewInit {
             if (force || viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 50) {
                 console.debug('scrollToBottom');
                 this.nzTableComponent.cdkVirtualScrollViewport?.scrollToIndex(this.logs.length);
-                setTimeout(() => this.nzTableComponent.cdkVirtualScrollViewport?.scrollToIndex(this.logs.length));
+                // virtual scrolling has a bug where it often fails to scroll to the bottom in one go.
+                setTimeout(() => {
+                    this.nzTableComponent.cdkVirtualScrollViewport?.scrollToIndex(this.logs.length)
+                }, 100);  // must wait after bottom of list rendered
             }
         });
     }
